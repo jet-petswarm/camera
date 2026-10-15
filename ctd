@@ -1,1 +1,1127 @@
 
+--[[
+	JET HUB  -  Tower Macro (Cameraman Tower Defense)
+
+	ฟีเจอร์
+	  * Money  : สแกนหาว่าเงินในเกมอยู่ที่ตัวแปร/Label ไหน เลือกแล้วกด Lock ให้อ่านเงินจากตัวนั้นตลอด
+	  * Steps  : แก้ราคา วาง/อัพ ของแต่ละสเต็ปได้ มีปุ่มล็อคราคา (รายสเต็ป และล็อคทั้งหมด)
+	  * Macro  : อัดสเต็ป / เล่น (เงินพอเมื่อไหร่ ทำสเต็ปนั้นทันที) / เซฟ / โหลด
+	  * ปุ่มเปิด-ปิดเมนู: RightControl
+
+	หมายเหตุ: ใช้กับ executor ที่รองรับ hookmetamethod + writefile/readfile
+]]
+
+if not game:IsLoaded() then game.Loaded:Wait() end
+
+local Players = game:GetService("Players")
+local RS = game:GetService("ReplicatedStorage")
+local HttpService = game:GetService("HttpService")
+local UIS = game:GetService("UserInputService")
+local RunService = game:GetService("RunService")
+
+local LP = Players.LocalPlayer
+while not LP do task.wait() LP = Players.LocalPlayer end
+
+--------------------------------------------------------------------------
+-- Config
+--------------------------------------------------------------------------
+local CFG_FILE = "JetHub_cfg_" .. LP.UserId .. ".json"
+local DIR = "JetHub"
+
+local CFG = {
+	moneySrc = nil,        -- {kind, path, attr}
+	moneyLocked = false,
+	priceLockAll = false,
+	autoLearn = true,      -- เรียนรู้ราคาจากเงินที่ลดจริงตอนเล่น (ถ้าไม่ล็อค)
+	retry = 3,
+	verifyTimeout = 3,
+	moneyTimeout = 0,      -- 0 = รอเงินไม่จำกัดเวลา
+	useDelay = true,       -- ถ้าอ่านเงินไม่ได้ ใช้ delay ที่อัดไว้แทน
+	selected = nil,
+}
+
+local function loadCfg()
+	if isfile and readfile and isfile(CFG_FILE) then
+		local ok, t = pcall(function() return HttpService:JSONDecode(readfile(CFG_FILE)) end)
+		if ok and type(t) == "table" then
+			for k, v in pairs(t) do CFG[k] = v end
+		end
+	end
+end
+local function saveCfg()
+	if writefile then
+		pcall(function() writefile(CFG_FILE, HttpService:JSONEncode(CFG)) end)
+	end
+end
+loadCfg()
+
+--------------------------------------------------------------------------
+-- Number helpers
+--------------------------------------------------------------------------
+local SUF = { k = 1e3, m = 1e6, b = 1e9, t = 1e12, qa = 1e15, qi = 1e18, sx = 1e21, sp = 1e24, oc = 1e27, no = 1e30, dc = 1e33 }
+local FMT = { {1e33,"dc"},{1e30,"no"},{1e27,"oc"},{1e24,"sp"},{1e21,"sx"},{1e18,"qi"},{1e15,"qa"},{1e12,"t"},{1e9,"b"},{1e6,"m"},{1e3,"k"} }
+
+local function parseNum(v)
+	if type(v) == "number" then return v end
+	if type(v) ~= "string" then return nil end
+	local s = (v:lower():gsub("[%$,]", ""))
+	local n, suf = s:match("^[^%d%.]*(%d+%.?%d*)%s*(%a*)%s*$")
+	n = tonumber(n)
+	if not n then return nil end
+	if suf and suf ~= "" and SUF[suf] then n = n * SUF[suf] end
+	return n
+end
+
+local function fmt(n)
+	if not n then return "--" end
+	for _, f in ipairs(FMT) do
+		if math.abs(n) >= f[1] then return string.format("%.2f%s", n / f[1], f[2]) end
+	end
+	return string.format("%.0f", n)
+end
+
+local function comma(n)
+	if not n then return "--" end
+	local s = string.format("%.0f", n)
+	local r = s:reverse():gsub("(%d%d%d)", "%1,"):reverse()
+	if r:sub(1, 1) == "," then r = r:sub(2) end
+	return r
+end
+
+--------------------------------------------------------------------------
+-- Instance path helpers (เก็บเป็นรายชื่อจาก game เพื่อเซฟลง JSON ได้)
+--------------------------------------------------------------------------
+local function pathOf(inst)
+	local t, c = {}, inst
+	while c and c ~= game do
+		table.insert(t, 1, c.Name)
+		c = c.Parent
+	end
+	return t
+end
+
+local function resolve(path)
+	local c = game
+	for _, n in ipairs(path) do
+		c = c and c:FindFirstChild(n)
+		if not c then return nil end
+	end
+	return c
+end
+
+local instCache = setmetatable({}, { __mode = "k" })
+local function resolveCached(src)
+	local c = instCache[src]
+	if c and c.Parent then return c end
+	c = resolve(src.path)
+	instCache[src] = c
+	return c
+end
+
+local function readInst(kind, inst, attr)
+	if kind == "val" then return parseNum(inst.Value)
+	elseif kind == "attr" then return parseNum(inst:GetAttribute(attr))
+	else return parseNum(inst.Text) end
+end
+
+local function readSource(src)
+	if not src or not src.path then return nil end
+	local inst = resolveCached(src)
+	if not inst then return nil end
+	local ok, v = pcall(readInst, src.kind, inst, src.attr)
+	if ok then return v end
+	return nil
+end
+
+local function shortSrc(src)
+	local p, parts = src.path, {}
+	for i = math.max(1, #p - 2), #p do parts[#parts + 1] = p[i] end
+	local s = table.concat(parts, ".")
+	if src.attr then s = s .. "@" .. src.attr end
+	return s
+end
+
+--------------------------------------------------------------------------
+-- Money source
+--------------------------------------------------------------------------
+local selCand = nil -- candidate ที่เลือกอยู่ (ยังไม่ล็อค)
+
+local function getMoney()
+	local src
+	if CFG.moneyLocked and CFG.moneySrc then
+		src = CFG.moneySrc
+	elseif selCand then
+		src = selCand.src
+	end
+	if src then return readSource(src) end
+	local ls = LP:FindFirstChild("leaderstats")
+	if ls then
+		for _, n in ipairs({ "Money", "Cash", "Coins", "Gold" }) do
+			local v = ls:FindFirstChild(n)
+			if v and v:IsA("ValueBase") then return parseNum(v.Value) end
+		end
+	end
+	return nil
+end
+
+local function scanMoney(realVal, filter)
+	local cands = {}
+	local function push(kind, inst, attr, value)
+		if #cands >= 800 then return end
+		cands[#cands + 1] = { src = { kind = kind, path = pathOf(inst), attr = attr }, value = value }
+	end
+	local function visit(inst)
+		if inst:IsA("ValueBase") then
+			local ok, v = pcall(function() return inst.Value end)
+			if ok then
+				local n = parseNum(v)
+				if n then push("val", inst, nil, n) end
+			end
+		elseif inst:IsA("TextLabel") or inst:IsA("TextButton") or inst:IsA("TextBox") then
+			local t = inst.Text
+			if t ~= "" and t:find("%d") then
+				local n = parseNum(t)
+				if n then push("text", inst, nil, n) end
+			end
+		end
+		for k, v in pairs(inst:GetAttributes()) do
+			if type(v) == "number" then push("attr", inst, k, v) end
+		end
+	end
+	visit(LP)
+	for _, d in ipairs(LP:GetDescendants()) do visit(d) end
+
+	local function level(v)
+		if not realVal then return 0 end
+		local d = math.abs(v - realVal)
+		if d <= 0.5 then return 2 end
+		if d <= math.max(1, realVal * 0.02) then return 1 end
+		return 0
+	end
+	local KEYS = { "money", "cash", "coin", "gold", "gem", "buck", "currency", "yen" }
+
+	local out = {}
+	for _, c in ipairs(cands) do
+		local name = (table.concat(c.src.path, ".") .. (c.src.attr or "")):lower()
+		if filter == "" or name:find(filter, 1, true) then
+			local score = 2 - level(c.value)
+			for _, k in ipairs(KEYS) do
+				if name:find(k, 1, true) then score = score - 0.5 break end
+			end
+			c.score = score
+			out[#out + 1] = c
+		end
+	end
+	table.sort(out, function(a, b) return a.score < b.score end)
+	return out
+end
+
+--------------------------------------------------------------------------
+-- Game access (remotes / towers)
+--------------------------------------------------------------------------
+local TowerAdd, TowerUpgrade, TowerSell
+local upEvt = {} -- [towerId] = {t=os.clock(), level=n}
+
+task.spawn(function()
+	while not (TowerAdd and TowerUpgrade and TowerSell) do
+		local ml = RS:FindFirstChild("ModuleLoader")
+		local sh = ml and ml:FindFirstChild("Shared")
+		local nw = sh and sh:FindFirstChild("Network")
+		local re = nw and nw:FindFirstChild("RemoteEvent")
+		if re then
+			TowerAdd = re:FindFirstChild("TowerAdd")
+			TowerUpgrade = re:FindFirstChild("TowerUpgrade")
+			TowerSell = re:FindFirstChild("TowerSell")
+		end
+		if not (TowerAdd and TowerUpgrade and TowerSell) then task.wait(2) end
+	end
+	TowerUpgrade.OnClientEvent:Connect(function(d)
+		if type(d) == "table" and d.Id then upEvt[d.Id] = { t = os.clock(), level = d.Level } end
+	end)
+end)
+
+local UUID = ("%x"):rep(8) .. "%-" .. ("%x"):rep(4) .. "%-" .. ("%x"):rep(4) .. "%-" .. ("%x"):rep(4) .. "%-" .. ("%x"):rep(12)
+local function isUUID(s) return type(s) == "string" and s:match("^" .. UUID .. "$") ~= nil end
+
+local function idOf(inst)
+	if isUUID(inst.Name) then return inst.Name end
+	for _, v in pairs(inst:GetAttributes()) do
+		if isUUID(v) then return v end
+	end
+	for _, c in ipairs(inst:GetChildren()) do
+		if c:IsA("ValueBase") and isUUID(c.Value) then return c.Value end
+	end
+	return nil
+end
+
+local function posOf(inst)
+	if inst:IsA("Model") then
+		local ok, cf = pcall(inst.GetPivot, inst)
+		if ok then return cf.Position end
+	elseif inst:IsA("BasePart") then
+		return inst.Position
+	end
+	local p = inst:FindFirstChildWhichIsA("BasePart", true)
+	return p and p.Position
+end
+
+local function towersFolder()
+	local g = workspace:FindFirstChild("Game")
+	return g and g:FindFirstChild("Towers")
+end
+
+local function nearCount(pos, r)
+	local f = towersFolder()
+	if not f then return nil end
+	local c = 0
+	for _, t in ipairs(f:GetChildren()) do
+		local p = posOf(t)
+		if p and (p - pos).Magnitude <= r then c = c + 1 end
+	end
+	return c
+end
+
+local function findTowerById(id)
+	local f = towersFolder()
+	local pool = f and f:GetChildren() or workspace:GetDescendants()
+	for _, t in ipairs(pool) do
+		if idOf(t) == id then return t end
+	end
+	if f then
+		for _, t in ipairs(f:GetDescendants()) do
+			if idOf(t) == id then return t end
+		end
+	end
+	return nil
+end
+
+local function findNearestTower(pos, maxDist)
+	local f = towersFolder()
+	local pool = f and f:GetChildren() or workspace:GetDescendants()
+	local best, bestD, bestId = nil, maxDist, nil
+	for _, t in ipairs(pool) do
+		local id = idOf(t)
+		if id then
+			local p = posOf(t)
+			if p then
+				local d = (p - pos).Magnitude
+				if d <= bestD then best, bestD, bestId = t, d, id end
+			end
+		end
+	end
+	return bestId, best
+end
+
+local function unitIdFor(step)
+	for i = 1, 5 do
+		local n = LP:GetAttribute("Slot" .. i)
+		local id = LP:GetAttribute("Slot" .. i .. "Id")
+		if n == step.name and type(id) == "string" and id ~= "" then return id end
+	end
+	return step.unitId
+end
+
+--------------------------------------------------------------------------
+-- Macro state
+--------------------------------------------------------------------------
+local steps = {}
+local recording, running = false, false
+local runId = 0
+local lastT = 0
+local UI = { refresh = function() end, status = function() end, playOff = function() end, recOff = function() end }
+
+local function status(m) UI.status(m) end
+
+local function measureDrop(before, timeout)
+	local drop, t = 0, os.clock()
+	while os.clock() - t < timeout do
+		task.wait(0.1)
+		local m = getMoney()
+		if m then drop = math.max(drop, before - m) end
+	end
+	return drop
+end
+
+-- อัด -------------------------------------------------------------------
+local function onRecord(remote, a)
+	if not recording then return end
+	local now = os.clock()
+	local delay = now - lastT
+	lastT = now
+	local before = getMoney()
+	local step
+	if remote == TowerAdd then
+		if typeof(a.CFrame) ~= "CFrame" or type(a.Name) ~= "string" then return end
+		local cf = a.CFrame
+		local p = (typeof(a.Pos) == "Vector3") and a.Pos or cf.Position
+		step = { type = "add", name = a.Name, unitId = a.UnitId, cframe = { cf:GetComponents() }, pos = { p.X, p.Y, p.Z }, delay = delay, price = 0 }
+	elseif remote == TowerUpgrade or remote == TowerSell then
+		if not a.Id then return end
+		local inst = findTowerById(a.Id)
+		local p = inst and posOf(inst)
+		if not p then status("หาตำแหน่งตัวละครไม่เจอ ข้ามสเต็ปนี้") return end
+		step = { type = (remote == TowerUpgrade) and "upgrade" or "sell", tpos = { p.X, p.Y, p.Z }, delay = delay, price = 0 }
+	else
+		return
+	end
+	table.insert(steps, step)
+	UI.refresh()
+	status("Recording... " .. #steps .. " steps")
+	if before and step.type ~= "sell" then
+		task.spawn(function()
+			local d = measureDrop(before, 3)
+			if d > 0 then step.price = d UI.refresh() end
+		end)
+	end
+end
+
+-- เล่น ------------------------------------------------------------------
+local function waitMoney(step, alive, idx)
+	local price = step.price or 0
+	if step.type == "sell" or price <= 0 then return true end
+	local t0 = os.clock()
+	while alive() do
+		local m = getMoney()
+		if m == nil then
+			-- อ่านเงินไม่ได้: ใช้ delay ที่อัดไว้
+			if CFG.useDelay and step.delay then task.wait(math.min(step.delay, 30)) end
+			return true
+		end
+		if m >= price then return true end
+		status(string.format("Step %d รอเงิน %s / %s", idx or 0, fmt(m), fmt(price)))
+		if CFG.moneyTimeout > 0 and os.clock() - t0 > CFG.moneyTimeout then return false end
+		task.wait(0.15)
+	end
+	return "stop"
+end
+
+local function attemptAdd(step, alive, vt)
+	if not TowerAdd then return false, 0, "remote ไม่พร้อม (เข้าแมตช์ก่อน)" end
+	local id = unitIdFor(step)
+	if not id then return false, 0, "ไม่พบยูนิต " .. tostring(step.name) .. " ใน Slot" end
+	local pos = Vector3.new(unpack(step.pos))
+	local cf = CFrame.new(unpack(step.cframe))
+	if (nearCount(pos, 2) or 0) >= 1 then return true, 0, "มีตัวอยู่แล้ว" end
+	local base = nearCount(pos, 3) or 0
+	local before = getMoney()
+	TowerAdd:FireServer({ UnitId = id, CFrame = cf, Name = step.name, Pos = pos })
+	local t, drop = os.clock(), 0
+	while alive() and os.clock() - t < vt do
+		task.wait(0.05)
+		local m = getMoney()
+		if before and m then drop = math.max(drop, before - m) end
+		local n = nearCount(pos, 3)
+		if n and n > base then
+			task.wait(0.25)
+			local m2 = getMoney()
+			if before and m2 then drop = math.max(drop, before - m2) end
+			return true, drop
+		end
+		if n == nil and drop > 0 then return true, drop end
+		if n == nil and before == nil and os.clock() - t > 0.6 then return true, 0 end
+	end
+	return false, drop, "วางไม่สำเร็จ"
+end
+
+local function attemptTarget(step, alive, vt)
+	if not (TowerUpgrade and TowerSell) then return false, 0, "remote ไม่พร้อม (เข้าแมตช์ก่อน)" end
+	if not step.tpos then return false, 0, "ไม่มีตำแหน่ง" end
+	local id, inst = findNearestTower(Vector3.new(unpack(step.tpos)), 10)
+	if not id then return false, 0, "ไม่พบตัวละครตรงตำแหน่งนี้" end
+	local before = getMoney()
+	local t, drop = os.clock(), 0
+	if step.type == "upgrade" then
+		TowerUpgrade:FireServer({ Id = id })
+		while alive() and os.clock() - t < vt do
+			task.wait(0.05)
+			local m = getMoney()
+			if before and m then drop = math.max(drop, before - m) end
+			local e = upEvt[id]
+			if e and e.t >= t then
+				task.wait(0.2)
+				local m2 = getMoney()
+				if before and m2 then drop = math.max(drop, before - m2) end
+				return true, drop
+			end
+			if (step.price or 0) > 0 and drop >= step.price * 0.9 then return true, drop end
+		end
+		return false, drop, "อัพไม่สำเร็จ"
+	else
+		TowerSell:FireServer({ Id = id })
+		while alive() and os.clock() - t < vt do
+			task.wait(0.05)
+			if not inst.Parent or not inst:IsDescendantOf(workspace) then return true, 0 end
+		end
+		return false, 0, "ขายไม่สำเร็จ"
+	end
+end
+
+local function execStep(step, alive, idx)
+	local retry = math.max(1, tonumber(CFG.retry) or 3)
+	local vt = tonumber(CFG.verifyTimeout) or 3
+	for attempt = 1, retry do
+		if not alive() then return false end
+		local g = waitMoney(step, alive, idx)
+		if g == "stop" then return false end
+		if g == false then
+			warn("[JetHub] step " .. tostring(idx) .. " รอเงินหมดเวลา")
+			return false
+		end
+		local ok, drop, why
+		if step.type == "add" then ok, drop, why = attemptAdd(step, alive, vt)
+		else ok, drop, why = attemptTarget(step, alive, vt) end
+		if ok then
+			if drop and drop > 0 and CFG.autoLearn and not (CFG.priceLockAll or step.locked) then
+				step.price = drop
+				UI.refresh()
+			end
+			return true
+		end
+		warn(string.format("[JetHub] step %s ลองครั้งที่ %d: %s", tostring(idx), attempt, tostring(why)))
+		task.wait(0.4)
+	end
+	return false
+end
+
+local function stopMacro()
+	running = false
+	runId = runId + 1
+end
+
+local function runMacro(startIdx)
+	if running or recording then return false end
+	if #steps == 0 then status("ยังไม่มีสเต็ป (อัดก่อน หรือโหลดมาโคร)") return false end
+	running = true
+	runId = runId + 1
+	local my = runId
+	local function alive() return running and my == runId end
+	task.spawn(function()
+		for i = startIdx or 1, #steps do
+			if not alive() then break end
+			local s = steps[i]
+			status(string.format("Step %d/%d  %s", i, #steps, s.type))
+			local ok = execStep(s, alive, i)
+			if not ok and alive() then status(string.format("Step %d ข้าม (ไม่สำเร็จ)", i)) end
+		end
+		if my == runId then
+			running = false
+			UI.playOff()
+			status("เล่นจบแล้ว")
+		end
+	end)
+	return true
+end
+
+-- ไฟล์มาโคร --------------------------------------------------------------
+local function ensureDir()
+	if makefolder and isfolder and not isfolder(DIR) then pcall(makefolder, DIR) end
+end
+local function cleanName(n)
+	n = tostring(n or ""):gsub("[^%w_%-%s]", ""):gsub("^%s+", ""):gsub("%s+$", "")
+	return n
+end
+local function filePath(n) return DIR .. "/" .. n .. ".json" end
+local function listMacros()
+	local out = {}
+	if listfiles then
+		local ok, files = pcall(listfiles, DIR)
+		if ok then
+			for _, f in ipairs(files) do
+				local n = tostring(f):match("([^/\\]+)%.json$")
+				if n then out[#out + 1] = n end
+			end
+		end
+	end
+	table.sort(out)
+	return out
+end
+local function saveMacro(name)
+	name = cleanName(name)
+	if name == "" then status("ตั้งชื่อมาโครก่อน") return false end
+	if #steps == 0 then status("ไม่มีสเต็ปให้เซฟ") return false end
+	if not writefile then status("executor ไม่รองรับ writefile") return false end
+	ensureDir()
+	writefile(filePath(name), HttpService:JSONEncode(steps))
+	CFG.selected = name
+	saveCfg()
+	status("เซฟ " .. name .. " แล้ว (" .. #steps .. " steps)")
+	return true
+end
+local function loadMacro(name)
+	if not (isfile and readfile and isfile(filePath(name))) then status("ไม่พบไฟล์ " .. tostring(name)) return false end
+	local ok, t = pcall(function() return HttpService:JSONDecode(readfile(filePath(name))) end)
+	if ok and type(t) == "table" then
+		steps = t
+		CFG.selected = name
+		saveCfg()
+		UI.refresh()
+		status("โหลด " .. name .. " (" .. #steps .. " steps)")
+		return true
+	end
+	status("อ่านไฟล์ไม่ได้")
+	return false
+end
+
+-- Hook (ดักตอนเราวางเอง) --------------------------------------------------
+local hookOK = false
+if hookmetamethod and newcclosure and getnamecallmethod then
+	local old
+	old = hookmetamethod(game, "__namecall", newcclosure(function(self, ...)
+		if recording and getnamecallmethod() == "FireServer" and (self == TowerAdd or self == TowerUpgrade or self == TowerSell) then
+			local a = ...
+			if typeof(a) == "table" then
+				local remote = self
+				task.spawn(function()
+					local ok, err = pcall(onRecord, remote, a)
+					if not ok then warn("[JetHub] record error:", err) end
+				end)
+			end
+		end
+		return old(self, ...)
+	end))
+	hookOK = true
+end
+
+--------------------------------------------------------------------------
+-- UI : JET HUB
+--------------------------------------------------------------------------
+local C = {
+	bg = Color3.fromRGB(8, 10, 24), side = Color3.fromRGB(13, 17, 38), row = Color3.fromRGB(20, 26, 56),
+	sel = Color3.fromRGB(34, 46, 104), text = Color3.fromRGB(235, 240, 255), sub = Color3.fromRGB(125, 140, 190),
+	acc = Color3.fromRGB(0, 200, 255), acc2 = Color3.fromRGB(255, 140, 40), ok = Color3.fromRGB(70, 225, 130),
+	warn = Color3.fromRGB(255, 205, 70), bad = Color3.fromRGB(255, 85, 105), off = Color3.fromRGB(50, 58, 110),
+}
+
+local function new(cls, props, parent)
+	local o = Instance.new(cls)
+	for k, v in pairs(props or {}) do o[k] = v end
+	if parent then o.Parent = parent end
+	return o
+end
+local function corner(o, r) new("UICorner", { CornerRadius = UDim.new(0, r or 8) }, o) end
+local function apply(o, props) for k, v in pairs(props or {}) do o[k] = v end return o end
+
+local function txt(parent, t, props)
+	local l = new("TextLabel", {
+		BackgroundTransparency = 1, Text = t, TextColor3 = C.text, Font = Enum.Font.GothamMedium,
+		TextSize = 13, TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd,
+	}, parent)
+	return apply(l, props)
+end
+local function btn(parent, t, props, cb)
+	local b = new("TextButton", {
+		Text = t, BackgroundColor3 = C.sel, TextColor3 = C.text, Font = Enum.Font.GothamBold,
+		TextSize = 12, AutoButtonColor = true, BorderSizePixel = 0,
+	}, parent)
+	corner(b, 6)
+	apply(b, props)
+	if cb then b.MouseButton1Click:Connect(cb) end
+	return b
+end
+local function box(parent, text, props, onDone)
+	local b = new("TextBox", {
+		Text = text or "", BackgroundColor3 = C.bg, TextColor3 = C.text, PlaceholderColor3 = C.sub,
+		Font = Enum.Font.Gotham, TextSize = 12, ClearTextOnFocus = false, BorderSizePixel = 0,
+	}, parent)
+	corner(b, 6)
+	apply(b, props)
+	if onDone then b.FocusLost:Connect(function() onDone(b.Text, b) end) end
+	return b
+end
+local function toggle(parent, text, init, props, cb)
+	local row = new("Frame", { BackgroundColor3 = C.row, BorderSizePixel = 0 }, parent)
+	corner(row, 8)
+	apply(row, props)
+	txt(row, text, { Size = UDim2.new(1, -64, 1, 0), Position = UDim2.fromOffset(10, 0) })
+	local sw = new("TextButton", { Text = "", Size = UDim2.fromOffset(40, 20), AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -10, 0.5, 0), BorderSizePixel = 0, AutoButtonColor = false }, row)
+	corner(sw, 10)
+	local knob = new("Frame", { Size = UDim2.fromOffset(16, 16), BackgroundColor3 = Color3.new(1, 1, 1), BorderSizePixel = 0 }, sw)
+	corner(knob, 8)
+	local state = false
+	local function set(v, silent)
+		state = v and true or false
+		sw.BackgroundColor3 = state and C.acc or C.off
+		knob.Position = state and UDim2.fromOffset(22, 2) or UDim2.fromOffset(2, 2)
+		if not silent and cb then cb(state) end
+	end
+	sw.MouseButton1Click:Connect(function() set(not state) end)
+	set(init, true)
+	return set, row
+end
+
+-- ลบ GUI เก่า
+local guiParent = (gethui and gethui()) or game:GetService("CoreGui")
+local oldGui = guiParent:FindFirstChild("JetHubGui")
+if oldGui then oldGui:Destroy() end
+
+local gui = new("ScreenGui", { Name = "JetHubGui", ResetOnSpawn = false, ZIndexBehavior = Enum.ZIndexBehavior.Sibling }, guiParent)
+
+local W, H, TITLE, FOOT, SIDE = 620, 430, 36, 26, 120
+local win = new("Frame", { Size = UDim2.fromOffset(W, H), Position = UDim2.fromOffset(60, 80), BackgroundColor3 = C.bg, BorderSizePixel = 0, ClipsDescendants = true }, gui)
+corner(win, 14)
+
+local stroke = new("UIStroke", { Thickness = 1.5, Color = Color3.new(1, 1, 1) }, win)
+local grad = new("UIGradient", { Color = ColorSequence.new({
+	ColorSequenceKeypoint.new(0, C.acc), ColorSequenceKeypoint.new(0.5, C.acc2), ColorSequenceKeypoint.new(1, C.acc),
+}) }, stroke)
+
+local title = new("Frame", { Size = UDim2.new(1, 0, 0, TITLE), BackgroundColor3 = C.side, BorderSizePixel = 0 }, win)
+local logo = txt(title, "JET", { Size = UDim2.fromOffset(46, TITLE), Position = UDim2.fromOffset(12, 0), Font = Enum.Font.GothamBlack, TextSize = 20 })
+new("UIGradient", { Color = ColorSequence.new(C.acc, C.acc2) }, logo)
+txt(title, "HUB  |  Tower Macro", { Size = UDim2.new(0.5, 0, 1, 0), Position = UDim2.fromOffset(58, 0), Font = Enum.Font.GothamBold, TextSize = 13, TextColor3 = C.sub })
+local moneyLbl = txt(title, "$ --", { Size = UDim2.new(0.4, -12, 1, 0), Position = UDim2.new(0.6, 0, 0, 0), TextXAlignment = Enum.TextXAlignment.Right, Font = Enum.Font.GothamBold, TextColor3 = C.ok })
+
+local side = new("Frame", { Size = UDim2.new(0, SIDE, 1, -(TITLE + FOOT)), Position = UDim2.fromOffset(0, TITLE), BackgroundColor3 = C.side, BorderSizePixel = 0 }, win)
+local content = new("Frame", { Size = UDim2.new(1, -SIDE, 1, -(TITLE + FOOT)), Position = UDim2.fromOffset(SIDE, TITLE), BackgroundTransparency = 1 }, win)
+local foot = new("Frame", { Size = UDim2.new(1, 0, 0, FOOT), Position = UDim2.new(0, 0, 1, -FOOT), BackgroundColor3 = C.side, BorderSizePixel = 0 }, win)
+local statusLbl = txt(foot, "พร้อมใช้งาน", { Size = UDim2.new(1, -16, 1, 0), Position = UDim2.fromOffset(10, 0), TextSize = 12, TextColor3 = C.sub })
+UI.status = function(m) statusLbl.Text = tostring(m) end
+
+-- Tabs
+local tabs = {}
+local function newPage(name, order)
+	local page = new("Frame", { Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, Visible = false }, content)
+	local b = new("TextButton", {
+		Size = UDim2.new(1, -12, 0, 34), Position = UDim2.fromOffset(6, 10 + (order - 1) * 40), BackgroundColor3 = C.sel,
+		BackgroundTransparency = 1, Text = "  " .. name, TextXAlignment = Enum.TextXAlignment.Left, TextColor3 = C.sub,
+		Font = Enum.Font.GothamBold, TextSize = 13, AutoButtonColor = false, BorderSizePixel = 0,
+	}, side)
+	corner(b, 8)
+	local t = { page = page, btn = b }
+	tabs[#tabs + 1] = t
+	b.MouseButton1Click:Connect(function()
+		for _, x in ipairs(tabs) do
+			x.page.Visible = (x == t)
+			x.btn.BackgroundTransparency = (x == t) and 0 or 1
+			x.btn.TextColor3 = (x == t) and C.text or C.sub
+		end
+	end)
+	return page, t
+end
+
+local function scrollList(parent, props)
+	local s = new("ScrollingFrame", {
+		BackgroundTransparency = 1, BorderSizePixel = 0, ScrollBarThickness = 3, AutomaticCanvasSize = Enum.AutomaticSize.Y,
+		CanvasSize = UDim2.new(), Size = UDim2.new(1, -12, 1, -12), Position = UDim2.fromOffset(6, 6),
+	}, parent)
+	apply(s, props)
+	new("UIListLayout", { Padding = UDim.new(0, 4), SortOrder = Enum.SortOrder.LayoutOrder }, s)
+	return s
+end
+
+local function hbar(parent, props)
+	local f = new("Frame", { BackgroundTransparency = 1 }, parent)
+	apply(f, props)
+	new("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal, Padding = UDim.new(0, 4) }, f)
+	return f
+end
+
+------------------------------------------------------------------------
+-- PAGE: Money
+------------------------------------------------------------------------
+local pMoney, tMoney = newPage("Money", 1)
+local rowRefs = {}
+
+local mStatus = txt(pMoney, "", { Size = UDim2.new(1, -12, 0, 22), Position = UDim2.fromOffset(6, 4), TextColor3 = C.sub, TextSize = 12 })
+
+local bar1 = hbar(pMoney, { Size = UDim2.new(1, -12, 0, 28), Position = UDim2.fromOffset(6, 30) })
+local realBox = box(bar1, "", { PlaceholderText = "เงินจริงในเกม (เช่น 1500 / 2.5k)", Size = UDim2.new(0.5, -2, 1, 0) })
+local filtBox = box(bar1, "", { PlaceholderText = "กรองชื่อ (ไม่ใส่ก็ได้)", Size = UDim2.new(0.5, -2, 1, 0) })
+
+local bar2 = hbar(pMoney, { Size = UDim2.new(1, -12, 0, 28), Position = UDim2.fromOffset(6, 64) })
+local bScan = btn(bar2, "Scan", { Size = UDim2.new(0.25, -3, 1, 0) })
+local bAuto = btn(bar2, "Auto pick", { Size = UDim2.new(0.25, -3, 1, 0) })
+local bLock = btn(bar2, CFG.moneyLocked and "Unlock" or "Lock source", { Size = UDim2.new(0.25, -3, 1, 0), BackgroundColor3 = C.acc2 })
+local bClear = btn(bar2, "Clear sel", { Size = UDim2.new(0.25, -3, 1, 0) })
+
+local listFrame = new("ScrollingFrame", {
+	Size = UDim2.new(1, -12, 1, -102), Position = UDim2.fromOffset(6, 98), BackgroundColor3 = C.side, BorderSizePixel = 0,
+	ScrollBarThickness = 3, AutomaticCanvasSize = Enum.AutomaticSize.Y, CanvasSize = UDim2.new(),
+}, pMoney)
+corner(listFrame, 8)
+new("UIListLayout", { Padding = UDim.new(0, 3) }, listFrame)
+new("UIPadding", { PaddingTop = UDim.new(0, 3), PaddingLeft = UDim.new(0, 3), PaddingRight = UDim.new(0, 3), PaddingBottom = UDim.new(0, 3) }, listFrame)
+
+local function matchLevel(v, real)
+	if not v or not real then return 0 end
+	local d = math.abs(v - real)
+	if d <= 0.5 then return 2 end
+	if d <= math.max(1, real * 0.02) then return 1 end
+	return 0
+end
+
+local TAG = { val = "V", attr = "A", text = "T" }
+
+local function clearRows()
+	for _, r in pairs(rowRefs) do r.frame:Destroy() end
+	rowRefs = {}
+end
+
+local function doScan()
+	clearRows()
+	local real = parseNum(realBox.Text)
+	local list = scanMoney(real, filtBox.Text:lower())
+	local shown = 0
+	for _, c in ipairs(list) do
+		if shown >= 150 then break end
+		shown = shown + 1
+		local f = new("Frame", { Size = UDim2.new(1, -6, 0, 26), BackgroundColor3 = C.row, BorderSizePixel = 0 }, listFrame)
+		corner(f, 6)
+		txt(f, "[" .. TAG[c.src.kind] .. "] " .. shortSrc(c.src), { Size = UDim2.new(1, -130, 1, 0), Position = UDim2.fromOffset(6, 0), TextSize = 12 })
+		local v = txt(f, comma(c.value), { Size = UDim2.fromOffset(120, 26), Position = UDim2.new(1, -124, 0, 0), TextXAlignment = Enum.TextXAlignment.Right, TextSize = 12, Font = Enum.Font.GothamBold })
+		local click = new("TextButton", { Text = "", BackgroundTransparency = 1, Size = UDim2.fromScale(1, 1) }, f)
+		click.MouseButton1Click:Connect(function()
+			if CFG.moneyLocked then status("ต้อง Unlock ก่อนถึงจะเปลี่ยนแหล่งเงินได้") return end
+			selCand = c
+			status("เลือก " .. shortSrc(c.src) .. " (กด Lock source เพื่อล็อค)")
+		end)
+		rowRefs[c] = { frame = f, val = v }
+	end
+	status(string.format("Scan เจอ %d รายการ (แสดง %d) — เขียวคือค่าตรงกับเงินจริง", #list, shown))
+	return list
+end
+
+bScan.MouseButton1Click:Connect(doScan)
+
+bAuto.MouseButton1Click:Connect(function()
+	if CFG.moneyLocked then status("ต้อง Unlock ก่อน") return end
+	local real = parseNum(realBox.Text)
+	if not real then status("ใส่เงินจริงในเกมก่อน แล้วกด Auto pick") return end
+	local list = doScan()
+	local best, bestRank
+	for _, c in ipairs(list) do
+		local lv = matchLevel(c.value, real)
+		if lv > 0 then
+			local rank = (3 - lv) * 10 + ((c.src.kind == "text") and 5 or 0)
+			if not bestRank or rank < bestRank then best, bestRank = c, rank end
+		end
+	end
+	if best then
+		selCand = best
+		status("Auto pick: " .. shortSrc(best.src))
+	else
+		status("ไม่พบค่าที่ตรงกับเงินจริง (ลองเปลี่ยนเงินแล้ว Scan ใหม่)")
+	end
+end)
+
+bLock.MouseButton1Click:Connect(function()
+	if CFG.moneyLocked then
+		CFG.moneyLocked = false
+		saveCfg()
+		bLock.Text = "Lock source"
+		status("Unlock แล้ว")
+	else
+		if not selCand then status("เลือกแหล่งเงินจากรายการก่อน") return end
+		CFG.moneySrc = selCand.src
+		CFG.moneyLocked = true
+		saveCfg()
+		bLock.Text = "Unlock"
+		status("ล็อคแหล่งเงิน: " .. shortSrc(selCand.src))
+	end
+end)
+
+bClear.MouseButton1Click:Connect(function()
+	if CFG.moneyLocked then status("ต้อง Unlock ก่อน") return end
+	selCand = nil
+	status("ล้างการเลือกแล้ว")
+end)
+
+------------------------------------------------------------------------
+-- PAGE: Steps
+------------------------------------------------------------------------
+local pSteps = newPage("Steps", 2)
+local stepsStatus
+
+local bar3 = hbar(pSteps, { Size = UDim2.new(1, -12, 0, 30), Position = UDim2.fromOffset(6, 6) })
+local setLockAll = toggle(bar3, "Lock ALL prices", CFG.priceLockAll, { Size = UDim2.new(0.5, -2, 1, 0) }, function(v)
+	CFG.priceLockAll = v
+	saveCfg()
+end)
+local setLearn = toggle(bar3, "Auto-learn price", CFG.autoLearn, { Size = UDim2.new(0.5, -2, 1, 0) }, function(v)
+	CFG.autoLearn = v
+	saveCfg()
+end)
+
+local bar4 = hbar(pSteps, { Size = UDim2.new(1, -12, 0, 26), Position = UDim2.fromOffset(6, 40) })
+stepsStatus = txt(bar4, "", { Size = UDim2.new(0.6, 0, 1, 0), TextColor3 = C.sub, TextSize = 12 })
+btn(bar4, "Clear all", { Size = UDim2.new(0.4, -4, 1, 0), BackgroundColor3 = C.bad }, function()
+	if running or recording then status("หยุดอัด/เล่นก่อน") return end
+	steps = {}
+	UI.refresh()
+end)
+
+local stepList = new("ScrollingFrame", {
+	Size = UDim2.new(1, -12, 1, -74), Position = UDim2.fromOffset(6, 70), BackgroundColor3 = C.side, BorderSizePixel = 0,
+	ScrollBarThickness = 3, AutomaticCanvasSize = Enum.AutomaticSize.Y, CanvasSize = UDim2.new(),
+}, pSteps)
+corner(stepList, 8)
+new("UIListLayout", { Padding = UDim.new(0, 3), SortOrder = Enum.SortOrder.LayoutOrder }, stepList)
+new("UIPadding", { PaddingTop = UDim.new(0, 3), PaddingLeft = UDim.new(0, 3), PaddingRight = UDim.new(0, 3), PaddingBottom = UDim.new(0, 3) }, stepList)
+
+local TYPE_LBL = { add = "PLACE", upgrade = "UP", sell = "SELL" }
+
+local function nameForStep(s)
+	if s.type == "add" then return s.name or "?" end
+	if s.tpos then
+		local tp = Vector3.new(unpack(s.tpos))
+		for _, o in ipairs(steps) do
+			if o.type == "add" and o.pos and (Vector3.new(unpack(o.pos)) - tp).Magnitude <= 6 then return o.name end
+		end
+	end
+	return "tower"
+end
+
+local refreshPending = false
+local function refreshSteps()
+	for _, ch in ipairs(stepList:GetChildren()) do
+		if ch:IsA("Frame") then ch:Destroy() end
+	end
+	for i, s in ipairs(steps) do
+		local row = new("Frame", { Size = UDim2.new(1, -6, 0, 30), BackgroundColor3 = C.row, BorderSizePixel = 0, LayoutOrder = i }, stepList)
+		corner(row, 6)
+		txt(row, string.format("#%d %s %s", i, TYPE_LBL[s.type] or s.type, nameForStep(s)), { Size = UDim2.fromOffset(170, 30), Position = UDim2.fromOffset(6, 0), TextSize = 12 })
+
+		if s.type ~= "sell" then
+			box(row, string.format("%.0f", s.price or 0), { Size = UDim2.fromOffset(96, 22), Position = UDim2.fromOffset(180, 4), TextXAlignment = Enum.TextXAlignment.Center }, function(t, b)
+				local n = parseNum(t)
+				if n then
+					s.price = n
+					s.locked = true -- แก้เองแล้วล็อคให้อัตโนมัติ
+				end
+				UI.refresh()
+			end)
+			local lk = btn(row, s.locked and "LOCK" or "free", { Size = UDim2.fromOffset(44, 22), Position = UDim2.fromOffset(280, 4), BackgroundColor3 = s.locked and C.acc or C.off, TextColor3 = s.locked and C.bg or C.text })
+			lk.MouseButton1Click:Connect(function()
+				s.locked = not s.locked
+				UI.refresh()
+			end)
+		else
+			txt(row, "(ไม่มีราคา)", { Size = UDim2.fromOffset(140, 30), Position = UDim2.fromOffset(184, 0), TextColor3 = C.sub, TextSize = 11 })
+		end
+
+		btn(row, "^", { Size = UDim2.fromOffset(24, 22), Position = UDim2.fromOffset(328, 4) }, function()
+			if i > 1 then steps[i], steps[i - 1] = steps[i - 1], steps[i] UI.refresh() end
+		end)
+		btn(row, "v", { Size = UDim2.fromOffset(24, 22), Position = UDim2.fromOffset(356, 4) }, function()
+			if i < #steps then steps[i], steps[i + 1] = steps[i + 1], steps[i] UI.refresh() end
+		end)
+		btn(row, "x", { Size = UDim2.fromOffset(24, 22), Position = UDim2.fromOffset(384, 4), BackgroundColor3 = C.bad }, function()
+			table.remove(steps, i)
+			UI.refresh()
+		end)
+		btn(row, "Do", { Size = UDim2.fromOffset(44, 22), Position = UDim2.fromOffset(412, 4), BackgroundColor3 = C.acc2 }, function()
+			if running or recording then status("หยุดอัด/เล่นก่อนถึงจะใช้ปุ่ม Do ได้") return end
+			task.spawn(function()
+				local t0 = os.clock()
+				local ok = execStep(s, function() return os.clock() - t0 < 20 end, i)
+				status(ok and ("Step " .. i .. " สำเร็จ") or ("Step " .. i .. " ไม่สำเร็จ"))
+			end)
+		end)
+	end
+	stepsStatus.Text = "Steps: " .. #steps
+end
+UI.refresh = function()
+	if refreshPending then return end
+	refreshPending = true
+	task.defer(function()
+		refreshPending = false
+		pcall(refreshSteps)
+	end)
+end
+
+------------------------------------------------------------------------
+-- PAGE: Macro
+------------------------------------------------------------------------
+local pMacro = newPage("Macro", 3)
+local mScroll = scrollList(pMacro)
+local order = 0
+local function nextOrder() order = order + 1 return order end
+
+local recSet, playSet
+recSet = toggle(mScroll, "Record (อัดสเต็ป)", false, { Size = UDim2.new(1, -6, 0, 34), LayoutOrder = nextOrder() }, function(v)
+	if v then
+		if running then status("หยุดเล่นก่อน") recSet(false, true) return end
+		if not hookOK then status("executor ไม่รองรับ hookmetamethod — อัดไม่ได้") recSet(false, true) return end
+		steps = {}
+		lastT = os.clock()
+		recording = true
+		UI.refresh()
+		status("Recording... วาง/อัพ/ขาย ตามปกติได้เลย")
+	else
+		recording = false
+		UI.refresh()
+		status("หยุดอัด (" .. #steps .. " steps) — ไปแก้ราคาที่แท็บ Steps ได้")
+	end
+end)
+UI.recOff = function() recSet(false, true) end
+
+playSet = toggle(mScroll, "Play (เงินพอ = ทำสเต็ปทันที)", false, { Size = UDim2.new(1, -6, 0, 34), LayoutOrder = nextOrder() }, function(v)
+	if v then
+		if recording then status("ปิด Record ก่อน") playSet(false, true) return end
+		if not runMacro(1) then playSet(false, true) end
+	else
+		stopMacro()
+		status("หยุดเล่นแล้ว")
+	end
+end)
+UI.playOff = function() playSet(false, true) end
+
+local nameRow = new("Frame", { Size = UDim2.new(1, -6, 0, 32), BackgroundColor3 = C.row, BorderSizePixel = 0, LayoutOrder = nextOrder() }, mScroll)
+corner(nameRow, 8)
+txt(nameRow, "Macro name", { Size = UDim2.new(0.4, -10, 1, 0), Position = UDim2.fromOffset(10, 0) })
+local nameBox = box(nameRow, CFG.selected or "Macro1", { Size = UDim2.new(0.6, -14, 0, 24), Position = UDim2.new(0.4, 4, 0.5, -12) })
+
+local fileList
+local selFile = CFG.selected
+local function refreshFiles()
+	for _, ch in ipairs(fileList:GetChildren()) do
+		if ch:IsA("TextButton") then ch:Destroy() end
+	end
+	for _, n in ipairs(listMacros()) do
+		local b = btn(fileList, n, { Size = UDim2.new(1, -6, 0, 26), BackgroundColor3 = (n == selFile) and C.acc or C.row, TextColor3 = (n == selFile) and C.bg or C.text, TextXAlignment = Enum.TextXAlignment.Left })
+		new("UIPadding", { PaddingLeft = UDim.new(0, 8) }, b)
+		b.MouseButton1Click:Connect(function()
+			if running or recording then status("หยุดอัด/เล่นก่อน") return end
+			selFile = n
+			nameBox.Text = n
+			loadMacro(n)
+			refreshFiles()
+		end)
+	end
+end
+
+local btnRow = hbar(mScroll, { Size = UDim2.new(1, -6, 0, 30), LayoutOrder = nextOrder() })
+btn(btnRow, "Save", { Size = UDim2.new(0.34, -3, 1, 0), BackgroundColor3 = C.ok, TextColor3 = C.bg }, function()
+	if recording then status("ปิด Record ก่อนเซฟ") return end
+	if saveMacro(nameBox.Text) then selFile = cleanName(nameBox.Text) refreshFiles() end
+end)
+btn(btnRow, "Refresh", { Size = UDim2.new(0.33, -3, 1, 0) }, function() refreshFiles() end)
+btn(btnRow, "Delete", { Size = UDim2.new(0.33, -3, 1, 0), BackgroundColor3 = C.bad }, function()
+	if not selFile then status("เลือกไฟล์ก่อน") return end
+	if delfile then pcall(delfile, filePath(selFile)) end
+	if CFG.selected == selFile then CFG.selected = nil saveCfg() end
+	status("ลบ " .. selFile .. " แล้ว")
+	selFile = nil
+	refreshFiles()
+end)
+
+txt(mScroll, "Saved macros (กดเพื่อโหลด)", { Size = UDim2.new(1, -6, 0, 20), TextColor3 = C.sub, TextSize = 12, LayoutOrder = nextOrder() })
+fileList = new("ScrollingFrame", {
+	Size = UDim2.new(1, -6, 0, 140), BackgroundColor3 = C.side, BorderSizePixel = 0, ScrollBarThickness = 3,
+	AutomaticCanvasSize = Enum.AutomaticSize.Y, CanvasSize = UDim2.new(), LayoutOrder = nextOrder(),
+}, mScroll)
+corner(fileList, 8)
+new("UIListLayout", { Padding = UDim.new(0, 3) }, fileList)
+new("UIPadding", { PaddingTop = UDim.new(0, 3), PaddingLeft = UDim.new(0, 3), PaddingRight = UDim.new(0, 3) }, fileList)
+
+------------------------------------------------------------------------
+-- PAGE: Settings
+------------------------------------------------------------------------
+local pSet = newPage("Settings", 4)
+local sScroll = scrollList(pSet)
+local so = 0
+local function sOrder() so = so + 1 return so end
+
+local function numRow(label, key, hint)
+	local row = new("Frame", { Size = UDim2.new(1, -6, 0, 34), BackgroundColor3 = C.row, BorderSizePixel = 0, LayoutOrder = sOrder() }, sScroll)
+	corner(row, 8)
+	txt(row, label, { Size = UDim2.new(0.62, -10, 1, 0), Position = UDim2.fromOffset(10, 0) })
+	box(row, tostring(CFG[key]), { Size = UDim2.new(0.38, -14, 0, 24), Position = UDim2.new(0.62, 4, 0.5, -12), PlaceholderText = hint or "" }, function(t, b)
+		local n = tonumber(t)
+		if n then CFG[key] = n saveCfg() end
+		b.Text = tostring(CFG[key])
+	end)
+end
+numRow("Retry ต่อสเต็ป (ครั้ง)", "retry")
+numRow("เวลาเช็คผล วาง/อัพ (วินาที)", "verifyTimeout")
+numRow("รอเงินสูงสุด (วิ, 0 = ไม่จำกัด)", "moneyTimeout")
+toggle(sScroll, "อ่านเงินไม่ได้ → ใช้ delay ที่อัดไว้", CFG.useDelay, { Size = UDim2.new(1, -6, 0, 34), LayoutOrder = sOrder() }, function(v)
+	CFG.useDelay = v
+	saveCfg()
+end)
+txt(sScroll, "ปุ่มเปิด/ปิดเมนู: RightControl   |   ลากแถบบนเพื่อย้ายหน้าต่าง", { Size = UDim2.new(1, -6, 0, 22), TextColor3 = C.sub, TextSize = 11, LayoutOrder = sOrder() })
+local heartbeatConn
+btn(sScroll, "Destroy Jet Hub", { Size = UDim2.new(1, -6, 0, 32), BackgroundColor3 = C.bad, LayoutOrder = sOrder() }, function()
+	stopMacro()
+	recording = false
+	if heartbeatConn then heartbeatConn:Disconnect() end
+	gui:Destroy()
+end)
+
+------------------------------------------------------------------------
+-- Dragging / toggle button / live update
+------------------------------------------------------------------------
+do
+	local dragging, startPos, startMouse
+	title.InputBegan:Connect(function(i)
+		if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
+			dragging, startPos, startMouse = true, win.Position, i.Position
+		end
+	end)
+	UIS.InputChanged:Connect(function(i)
+		if dragging and (i.UserInputType == Enum.UserInputType.MouseMovement or i.UserInputType == Enum.UserInputType.Touch) then
+			local d = i.Position - startMouse
+			win.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + d.X, startPos.Y.Scale, startPos.Y.Offset + d.Y)
+		end
+	end)
+	UIS.InputEnded:Connect(function(i)
+		if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then dragging = false end
+	end)
+end
+
+local fab = new("TextButton", {
+	Size = UDim2.fromOffset(46, 46), Position = UDim2.new(0, 8, 0.5, -23), BackgroundColor3 = C.side, Text = "J",
+	TextColor3 = C.acc, Font = Enum.Font.GothamBlack, TextSize = 22, BorderSizePixel = 0,
+}, gui)
+corner(fab, 23)
+local fabStroke = new("UIStroke", { Thickness = 1.5, Color = C.acc }, fab)
+fab.MouseButton1Click:Connect(function() win.Visible = not win.Visible end)
+UIS.InputBegan:Connect(function(i, gp)
+	if not gp and i.KeyCode == Enum.KeyCode.RightControl then win.Visible = not win.Visible end
+end)
+
+local function updateLive()
+	local m = getMoney()
+	moneyLbl.Text = "$ " .. fmt(m)
+	if CFG.moneyLocked and CFG.moneySrc then
+		mStatus.Text = "LOCKED: " .. shortSrc(CFG.moneySrc) .. "  =  " .. comma(m)
+		mStatus.TextColor3 = C.ok
+	elseif selCand then
+		mStatus.Text = "Selected: " .. shortSrc(selCand.src) .. "  =  " .. comma(m) .. "  (ยังไม่ล็อค)"
+		mStatus.TextColor3 = C.warn
+	else
+		mStatus.Text = "ยังไม่ได้เลือกแหล่งเงิน — ใส่เงินจริง → Scan → เลือก → Lock"
+		mStatus.TextColor3 = C.sub
+	end
+	local real = parseNum(realBox.Text)
+	local activeSrc = (CFG.moneyLocked and CFG.moneySrc) or (selCand and selCand.src)
+	for c, r in pairs(rowRefs) do
+		local v = readSource(c.src)
+		r.val.Text = comma(v)
+		local lv = matchLevel(v, real)
+		r.val.TextColor3 = (lv == 2 and C.ok) or (lv == 1 and C.warn) or C.text
+		r.frame.BackgroundColor3 = (activeSrc == c.src) and C.sel or C.row
+	end
+end
+
+local rot, acc = 0, 0
+heartbeatConn = RunService.Heartbeat:Connect(function(dt)
+	rot = (rot + dt * 60) % 360
+	grad.Rotation = rot
+	acc = acc + dt
+	if acc >= 0.35 then
+		acc = 0
+		pcall(updateLive)
+	end
+end)
+
+-- เริ่มต้น
+tabs[1].btn.BackgroundTransparency = 0
+tabs[1].btn.TextColor3 = C.text
+tabs[1].page.Visible = true
+
+ensureDir()
+refreshFiles()
+if CFG.selected then loadMacro(CFG.selected) end
+UI.refresh()
+status(hookOK and "Jet Hub พร้อมใช้งาน" or "Jet Hub พร้อม (executor ไม่รองรับ hookmetamethod → อัดไม่ได้ แต่เล่น/แก้ไฟล์ได้)")
