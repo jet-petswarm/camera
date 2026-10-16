@@ -176,6 +176,9 @@ local LANG = {
 		import_empty = "Nothing to import: paste a code or copy one first",
 		step_ok = "Step %d done",
 		step_fail = "Step %d failed",
+		step_deleted = "Deleted step #%d and saved to macro: %s",
+		step_moved = "Moved step and saved to macro: %s",
+		cleared_saved = "Cleared all steps and saved to macro: %s",
 	},
 	th = {
 		ready = "พร้อมใช้งาน",
@@ -277,6 +280,9 @@ local LANG = {
 		import_empty = "ไม่มีอะไรให้นำเข้า: วางโค้ดหรือคัดลอกมาก่อน",
 		step_ok = "สเต็ป %d สำเร็จ",
 		step_fail = "สเต็ป %d ไม่สำเร็จ",
+		step_deleted = "ลบสเต็ป #%d และบันทึกลงมาโครแล้ว: %s",
+		step_moved = "ย้ายสเต็ปและบันทึกลงมาโครแล้ว: %s",
+		cleared_saved = "ล้างสเต็ปทั้งหมดและบันทึกลงมาโครแล้ว: %s",
 	},
 }
 
@@ -880,11 +886,11 @@ local function saveMacro(name)
 	return true
 end
 local pendingSave = 0
-autoSave = function(nameOverride)
-	if recording or #steps == 0 or not writefile then return end
+autoSave = function(nameOverride, now)
+	if recording or not writefile then return end
 	pendingSave = pendingSave + 1
 	local my = pendingSave
-	task.delay(0.4, function()
+	local function doSave()
 		if my ~= pendingSave or recording then return end
 		local name = nameOverride or CFG.selected
 		if not name or name == "" then name = "AutoMacro" end
@@ -895,7 +901,8 @@ autoSave = function(nameOverride)
 			writefile(filePath(name), HttpService:JSONEncode({ v = 2, steps = steps, prices = prices }))
 		end)
 		if ok and CFG.selected ~= name then CFG.selected = name saveCfg() end
-	end)
+	end
+	if now then doSave() else task.delay(0.4, doSave) end
 end
 
 local function loadMacro(name)
@@ -1694,6 +1701,8 @@ btnK(JH.bar4, "clear_all", { Size = UDim2.new(0.4, -3, 1, 0), BackgroundColor3 =
 	if running or recording then status("stop_first") return end
 	steps, prices, meta = {}, {}, {}
 	curIdx = 0
+	autoSave(nil, true)
+	status("cleared_saved", CFG.selected or "AutoMacro")
 	UI.refresh()
 end)
 
@@ -1720,16 +1729,17 @@ local function refreshSteps()
 		txt(row, (s.type ~= "sell" and pr > 0) and ("$ " .. fmt(pr)) or "-", { Size = UDim2.fromOffset(80, 30), Position = UDim2.fromOffset(292, 0), TextSize = 12, TextColor3 = C.sub, TextXAlignment = Enum.TextXAlignment.Center })
 		btn(row, "^", { Size = UDim2.fromOffset(26, 22), Position = UDim2.fromOffset(376, 4) }, function()
 			if running or recording then status("stop_first") return end
-			if i > 1 then steps[i], steps[i - 1] = steps[i - 1], steps[i] autoSave() UI.refresh() end
+			if i > 1 then steps[i], steps[i - 1] = steps[i - 1], steps[i] autoSave(nil, true) status("step_moved", CFG.selected or "AutoMacro") UI.refresh() end
 		end, true)
 		btn(row, "v", { Size = UDim2.fromOffset(26, 22), Position = UDim2.fromOffset(404, 4) }, function()
 			if running or recording then status("stop_first") return end
-			if i < #steps then steps[i], steps[i + 1] = steps[i + 1], steps[i] autoSave() UI.refresh() end
+			if i < #steps then steps[i], steps[i + 1] = steps[i + 1], steps[i] autoSave(nil, true) status("step_moved", CFG.selected or "AutoMacro") UI.refresh() end
 		end, true)
 		btn(row, "x", { Size = UDim2.fromOffset(26, 22), Position = UDim2.fromOffset(432, 4), BackgroundColor3 = C.bad }, function()
 			if running or recording then status("stop_first") return end
 			table.remove(steps, i)
-			autoSave()
+			autoSave(nil, true)
+			status("step_deleted", i, CFG.selected or "AutoMacro")
 			UI.refresh()
 		end, true)
 		local doB = btn(row, "", { Size = UDim2.fromOffset(44, 22), Position = UDim2.fromOffset(462, 4), BackgroundColor3 = C.acc2, TextColor3 = C.bg }, function()
