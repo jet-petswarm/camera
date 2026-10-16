@@ -1,11 +1,14 @@
 --[[
-	JET HUB _ CAMERA  -  Cameraman Tower Defense (แยกจาก Jet Hub หลัก)
+	JET HUB _ CAMERA  v2  -  Cameraman Tower Defense
 
-	* เงินดึงจาก leaderstats.Money อัตโนมัติ (ไม่มีระบบสแกน)
-	* Game  : Vote (Easy/Normal/Hard/Insane), Speed, Skip Wave, Play Again
-	* Steps : แก้ราคา วาง/อัพ ได้ + ล็อคราคา (รายสเต็ป / ทั้งหมด)
-	* Macro : อัด / เล่น (เงินพอ = ทำสเต็ปนั้นทันที) / เซฟ / โหลด
-	* เปิด-ปิดเมนู: RightControl
+	v2:
+	  * จำสวิตช์ที่เปิดไว้ (Vote/Speed/Skip/Play Again/Play/Loop) แล้วเปิดให้อัตโนมัติตอนโหลด
+	  * ราคาแบบเลือกยูนิต -> กด Select -> แก้ราคาตามขั้น (ขั้น 1 = วาง, ขั้น 2.. = อัพเกรด)
+	  * สลับภาษา ไทย / English
+	  * การ์ดสถานะมาโคร บอกว่ากำลังทำอะไร / ถัดไปทำอะไร / ขาดเงินเท่าไหร่
+	  * UI ใหม่ มีอนิเมชั่น + โปรไฟล์ผู้เล่นมุมซ้ายล่าง (ท่ากอดอก)
+	  * เงินดึงจาก leaderstats.Money อัตโนมัติ
+	  * เปิด-ปิดเมนู: RightControl
 ]]
 
 if not game:IsLoaded() then game.Loaded:Wait() end
@@ -15,14 +18,15 @@ local RS = game:GetService("ReplicatedStorage")
 local HttpService = game:GetService("HttpService")
 local UIS = game:GetService("UserInputService")
 local RunService = game:GetService("RunService")
+local TweenService = game:GetService("TweenService")
 
 local LP = Players.LocalPlayer
 while not LP do task.wait() LP = Players.LocalPlayer end
 
 --------------------------------------------------------------------------
--- Config
+-- Config (จำค่าทั้งหมด)
 --------------------------------------------------------------------------
-local CFG_FILE = "JetHubCamera_cfg_" .. LP.UserId .. ".json"
+local CFG_FILE = "JetHubCamera2_cfg_" .. LP.UserId .. ".json"
 local DIR = "JetHubCamera"
 
 local CFG = {
@@ -39,13 +43,22 @@ local CFG = {
 	speedInterval = 5,
 	skipInterval = 1,
 	againInterval = 5,
+	lang = ((LP.LocaleId or ""):sub(1, 2) == "th") and "th" or "en",
+	tab = 1,
+	flags = { vote = false, speed = false, skip = false, again = false, play = false, loop = false },
 }
 
 local function loadCfg()
 	if isfile and readfile and isfile(CFG_FILE) then
 		local ok, t = pcall(function() return HttpService:JSONDecode(readfile(CFG_FILE)) end)
 		if ok and type(t) == "table" then
-			for k, v in pairs(t) do CFG[k] = v end
+			for k, v in pairs(t) do
+				if k == "flags" and type(v) == "table" then
+					for fk, fv in pairs(v) do CFG.flags[fk] = fv end
+				else
+					CFG[k] = v
+				end
+			end
 		end
 	end
 end
@@ -55,6 +68,225 @@ local function saveCfg()
 	end
 end
 loadCfg()
+local flags = CFG.flags
+
+--------------------------------------------------------------------------
+-- ภาษา (ทุกข้อความใน UI ผ่านตัวนี้ ไม่ปนภาษา)
+--------------------------------------------------------------------------
+local LANG = {
+	en = {
+		ready = "Ready",
+		ready_nohook = "Ready (executor lacks hookmetamethod: can't record, but can play)",
+		tab_game = "Game", tab_macro = "Macro", tab_prices = "Prices", tab_steps = "Steps", tab_settings = "Settings",
+
+		vote_hdr = "Vote mode (tap to vote now)",
+		mode_Easy = "Easy", mode_Normal = "Normal", mode_Hard = "Hard", mode_Insane = "Insane",
+		voted = "Voted: %s",
+		no_remote = "Remote %s not found (are you in a match?)",
+		auto_vote = "Auto Vote", auto_vote_d = "Repeats the vote on a timer",
+		vote_every = "Vote every (sec)",
+		speed_hdr = "Speed (tap to apply now)",
+		speed_set = "Speed set to x%s",
+		auto_speed = "Auto Speed", auto_speed_d = "Re-applies the chosen speed on a timer",
+		speed_every = "Re-apply every (sec)",
+		auto_skip = "Auto Skip Wave", auto_skip_d = "Skips each wave as soon as possible",
+		skip_every = "Skip every (sec)",
+		auto_again = "Auto Play Again", auto_again_d = "Sends Play Again on a timer",
+		again_every = "Play Again every (sec)",
+		remember_note = "Switches you turn on are remembered and restored on load",
+
+		macro_status = "Macro status",
+		st_idle = "Idle", st_rec = "Recording", st_acting = "Working",
+		st_wait_money = "Waiting for money", st_wait_match = "Waiting for match", st_loop = "Waiting for next match",
+		rec_progress = "Recording... %d steps",
+		no_steps = "No steps yet. Record or load a macro",
+		finished = "Finished",
+		loop_wait = "Waiting for the next match to restart",
+		next_line = "Step %d/%d: %s",
+		then_line = "Then: %s",
+		money_ok = "Money %s is enough (needs %s)",
+		money_short = "Needs %s, have %s (short %s)",
+		money_na = "Can't read leaderstats.Money",
+		money_free = "No price for this step",
+		d_place = "Place %s (stage %d)",
+		d_up = "Upgrade %s (stage %d)",
+		d_sell = "Sell %s",
+
+		record = "Record", record_d = "Captures your place / upgrade / sell actions",
+		play = "Play", play_d = "Acts as soon as money is enough for the step",
+		loop = "Loop macro", loop_d = "Restarts the macro when a new match begins",
+		macro_name = "Macro name",
+		save = "Save", refresh = "Refresh", delete = "Delete",
+		saved_macros = "Saved macros (tap to load)",
+
+		lock_all = "Lock ALL prices", auto_learn = "Auto-learn price",
+		units_hdr = "Units in this macro",
+		select = "Select",
+		pick_first = "Pick a unit, then press Select",
+		unit_title = "%s: %d stages",
+		stage_place = "Stage %d  |  Place",
+		stage_up = "Stage %d  |  Upgrade",
+		lock_on = "LOCKED", lock_off = "free",
+		no_units = "No units yet",
+		need_unit = "Pick a unit first",
+		unit_selected = "Selected %s",
+
+		steps_count = "Steps: %d",
+		clear_all = "Clear all",
+		do_step = "Do",
+
+		retry = "Retries per step",
+		verify = "Verify timeout (sec)",
+		money_timeout = "Max wait for money (sec, 0 = forever)",
+		use_delay = "If money is unreadable, use recorded delay",
+		language = "Language",
+		info_keys = "Toggle menu: RightControl  |  Drag the top bar to move",
+		info_money = "Money is read from leaderstats.Money automatically",
+		destroy = "Destroy Jet Hub _ Camera",
+
+		wait_match = "Waiting for match remotes...",
+		tower_pos_missing = "Couldn't find the tower position, step skipped",
+		step_skipped = "Step %d skipped (failed)",
+		play_done = "Macro finished",
+		stopped = "Stopped",
+		stop_first = "Stop recording / playing first",
+		close_rec = "Turn off Record first",
+		no_hook = "Executor lacks hookmetamethod: can't record",
+		rec_started = "Recording: place / upgrade / sell as usual",
+		rec_stopped = "Recording stopped (%d steps). Set prices in the Prices tab",
+		name_first = "Enter a macro name first",
+		nothing_to_save = "Nothing to save",
+		no_writefile = "Executor has no writefile",
+		saved = "Saved %s (%d steps)",
+		file_missing = "File not found: %s",
+		read_fail = "Couldn't read the file",
+		loaded = "Loaded %s (%d steps)",
+		pick_file = "Pick a file first",
+		deleted = "Deleted %s",
+		step_ok = "Step %d done",
+		step_fail = "Step %d failed",
+	},
+	th = {
+		ready = "พร้อมใช้งาน",
+		ready_nohook = "พร้อมใช้งาน (executor ไม่รองรับ hookmetamethod: อัดไม่ได้ แต่เล่นได้)",
+		tab_game = "เกม", tab_macro = "มาโคร", tab_prices = "ราคา", tab_steps = "สเต็ป", tab_settings = "ตั้งค่า",
+
+		vote_hdr = "โหมดโหวต (กดเพื่อโหวตทันที)",
+		mode_Easy = "ง่าย", mode_Normal = "ปกติ", mode_Hard = "ยาก", mode_Insane = "บ้าคลั่ง",
+		voted = "โหวตแล้ว: %s",
+		no_remote = "ไม่พบ Remote %s (อยู่ในแมตช์หรือยัง?)",
+		auto_vote = "โหวตอัตโนมัติ", auto_vote_d = "โหวตซ้ำตามเวลาที่ตั้ง",
+		vote_every = "โหวตทุก (วินาที)",
+		speed_hdr = "ความเร็ว (กดเพื่อใช้ทันที)",
+		speed_set = "ตั้งความเร็ว x%s แล้ว",
+		auto_speed = "ความเร็วอัตโนมัติ", auto_speed_d = "ย้ำค่าความเร็วที่เลือกตามเวลา",
+		speed_every = "ย้ำทุก (วินาที)",
+		auto_skip = "ข้ามเวฟอัตโนมัติ", auto_skip_d = "ข้ามเวฟทันทีที่ทำได้",
+		skip_every = "ข้ามทุก (วินาที)",
+		auto_again = "เล่นใหม่อัตโนมัติ", auto_again_d = "ส่งคำสั่งเล่นใหม่ตามเวลาที่ตั้ง",
+		again_every = "เล่นใหม่ทุก (วินาที)",
+		remember_note = "สวิตช์ที่เปิดไว้จะถูกจำ และเปิดให้อัตโนมัติเมื่อโหลดใหม่",
+
+		macro_status = "สถานะมาโคร",
+		st_idle = "ว่าง", st_rec = "กำลังอัด", st_acting = "กำลังทำงาน",
+		st_wait_money = "รอเงิน", st_wait_match = "รอเข้าแมตช์", st_loop = "รอแมตช์ถัดไป",
+		rec_progress = "กำลังอัด... %d สเต็ป",
+		no_steps = "ยังไม่มีสเต็ป กดอัดหรือโหลดมาโคร",
+		finished = "จบแล้ว",
+		loop_wait = "รอแมตช์ใหม่เพื่อเริ่มมาโครอีกรอบ",
+		next_line = "สเต็ป %d/%d: %s",
+		then_line = "จากนั้น: %s",
+		money_ok = "เงิน %s พอแล้ว (ต้องใช้ %s)",
+		money_short = "ต้องใช้ %s มี %s (ขาด %s)",
+		money_na = "อ่าน leaderstats.Money ไม่ได้",
+		money_free = "สเต็ปนี้ไม่มีราคา",
+		d_place = "วาง %s (ขั้น %d)",
+		d_up = "อัพเกรด %s (ขั้น %d)",
+		d_sell = "ขาย %s",
+
+		record = "อัดมาโคร", record_d = "จดการวาง / อัพเกรด / ขาย ที่คุณทำ",
+		play = "เล่นมาโคร", play_d = "ทำสเต็ปทันทีที่เงินพอ",
+		loop = "วนมาโคร", loop_d = "เริ่มมาโครใหม่เมื่อขึ้นแมตช์ใหม่",
+		macro_name = "ชื่อมาโคร",
+		save = "บันทึก", refresh = "รีเฟรช", delete = "ลบ",
+		saved_macros = "มาโครที่บันทึกไว้ (กดเพื่อโหลด)",
+
+		lock_all = "ล็อคราคาทั้งหมด", auto_learn = "เรียนรู้ราคาอัตโนมัติ",
+		units_hdr = "ยูนิตในมาโครนี้",
+		select = "เลือก",
+		pick_first = "เลือกยูนิต แล้วกดปุ่มเลือก",
+		unit_title = "%s: %d ขั้น",
+		stage_place = "ขั้น %d  |  วาง",
+		stage_up = "ขั้น %d  |  อัพเกรด",
+		lock_on = "ล็อค", lock_off = "ปกติ",
+		no_units = "ยังไม่มียูนิต",
+		need_unit = "เลือกยูนิตก่อน",
+		unit_selected = "เลือก %s แล้ว",
+
+		steps_count = "สเต็ป: %d",
+		clear_all = "ล้างทั้งหมด",
+		do_step = "ทำ",
+
+		retry = "ลองใหม่ต่อสเต็ป (ครั้ง)",
+		verify = "เวลารอตรวจผล (วินาที)",
+		money_timeout = "รอเงินสูงสุด (วินาที, 0 = ไม่จำกัด)",
+		use_delay = "อ่านเงินไม่ได้ ให้ใช้ delay ที่อัดไว้",
+		language = "ภาษา",
+		info_keys = "เปิด/ปิดเมนู: RightControl  |  ลากแถบด้านบนเพื่อย้าย",
+		info_money = "เงินอ่านจาก leaderstats.Money อัตโนมัติ",
+		destroy = "ปิด Jet Hub _ Camera",
+
+		wait_match = "รอ Remote ของแมตช์...",
+		tower_pos_missing = "หาตำแหน่งตัวละครไม่ได้ ข้ามสเต็ปนี้",
+		step_skipped = "สเต็ป %d ข้าม (ไม่สำเร็จ)",
+		play_done = "มาโครเล่นจบแล้ว",
+		stopped = "หยุดแล้ว",
+		stop_first = "หยุดอัด / เล่นก่อน",
+		close_rec = "ปิดการอัดก่อน",
+		no_hook = "executor ไม่รองรับ hookmetamethod: อัดไม่ได้",
+		rec_started = "กำลังอัด: วาง / อัพเกรด / ขาย ตามปกติได้เลย",
+		rec_stopped = "หยุดอัดแล้ว (%d สเต็ป) ตั้งราคาได้ที่แท็บราคา",
+		name_first = "ตั้งชื่อมาโครก่อน",
+		nothing_to_save = "ไม่มีสเต็ปให้บันทึก",
+		no_writefile = "executor ไม่รองรับ writefile",
+		saved = "บันทึก %s แล้ว (%d สเต็ป)",
+		file_missing = "ไม่พบไฟล์: %s",
+		read_fail = "อ่านไฟล์ไม่ได้",
+		loaded = "โหลด %s แล้ว (%d สเต็ป)",
+		pick_file = "เลือกไฟล์ก่อน",
+		deleted = "ลบ %s แล้ว",
+		step_ok = "สเต็ป %d สำเร็จ",
+		step_fail = "สเต็ป %d ไม่สำเร็จ",
+	},
+}
+
+local function T(k, ...)
+	local s = (LANG[CFG.lang] and LANG[CFG.lang][k]) or LANG.en[k] or k
+	if select("#", ...) > 0 then
+		local ok, r = pcall(string.format, s, ...)
+		if ok then return r end
+	end
+	return s
+end
+
+local BIND = {}
+local function bind(obj, prop, key, ...)
+	obj[prop] = T(key, ...)
+	BIND[#BIND + 1] = { obj = obj, prop = prop, key = key, args = { ... } }
+end
+local lastStatus = { "ready" }
+local statusLbl
+local function status(k, ...)
+	lastStatus = { k, ... }
+	if statusLbl then statusLbl.Text = T(k, ...) end
+end
+local function relang()
+	for i = #BIND, 1, -1 do
+		local b = BIND[i]
+		if b.obj.Parent then b.obj[b.prop] = T(b.key, unpack(b.args)) else table.remove(BIND, i) end
+	end
+	if statusLbl then statusLbl.Text = T(unpack(lastStatus)) end
+end
 
 --------------------------------------------------------------------------
 -- Number helpers
@@ -223,15 +455,83 @@ local function unitIdFor(step)
 end
 
 --------------------------------------------------------------------------
--- Macro state
+-- Macro data : steps + ราคาตาม (ยูนิต, ขั้น)
 --------------------------------------------------------------------------
 local steps = {}
+local prices = {}   -- prices[unit][tostring(stage)] = {price=, locked=}
+local meta = {}     -- meta[i] = {unit=, stage=}
 local recording, running = false, false
-local runId = 0
-local lastT = 0
-local UI = { refresh = function() end, status = function() end, playOff = function() end }
+local runId, lastT = 0, 0
+local curIdx, phase = 0, "act"
+local UI = { refresh = function() end, playOff = function() end }
 
-local function status(m) UI.status(m) end
+local function recompute()
+	meta = {}
+	local counts = {}
+	for i, s in ipairs(steps) do
+		if s.type == "add" then
+			meta[i] = { unit = s.name or "?", stage = 1, tower = i }
+			counts[i] = 1
+		else
+			local best, bd
+			if s.tpos then
+				local tp = Vector3.new(unpack(s.tpos))
+				for j = i - 1, 1, -1 do
+					local o = steps[j]
+					if o.type == "add" and o.pos then
+						local d = (Vector3.new(unpack(o.pos)) - tp).Magnitude
+						if d <= 6 and (not bd or d < bd) then best, bd = j, d end
+					end
+				end
+			end
+			if best then
+				if s.type == "upgrade" then counts[best] = counts[best] + 1 end
+				meta[i] = { unit = steps[best].name or "?", stage = counts[best], tower = best }
+			else
+				meta[i] = { unit = "?", stage = 2, tower = 0 }
+			end
+		end
+	end
+end
+
+local function pslot(unit, stage, create)
+	local u = prices[unit]
+	if not u then
+		if not create then return nil end
+		u = {}
+		prices[unit] = u
+	end
+	local k = tostring(stage)
+	local p = u[k]
+	if not p and create then
+		p = { price = 0, locked = false }
+		u[k] = p
+	end
+	return p
+end
+
+local function priceOf(i)
+	local m, s = meta[i], steps[i]
+	if not m or not s or s.type == "sell" then return 0 end
+	local p = pslot(m.unit, m.stage)
+	return p and p.price or 0
+end
+
+local function setLearned(i, v)
+	local m = meta[i]
+	if not m then return end
+	local p = pslot(m.unit, m.stage, true)
+	if not (CFG.priceLockAll or p.locked) then p.price = v end
+end
+
+local function describe(i)
+	local s = steps[i]
+	if not s then return "?" end
+	local m = meta[i] or { unit = "?", stage = 1 }
+	if s.type == "add" then return T("d_place", m.unit, math.floor(m.stage))
+	elseif s.type == "upgrade" then return T("d_up", m.unit, math.floor(m.stage))
+	else return T("d_sell", m.unit) end
+end
 
 local function measureDrop(before, timeout)
 	local drop, t = 0, os.clock()
@@ -243,6 +543,9 @@ local function measureDrop(before, timeout)
 	return drop
 end
 
+--------------------------------------------------------------------------
+-- อัด
+--------------------------------------------------------------------------
 local function onRecord(remote, a)
 	if not recording then return end
 	local now = os.clock()
@@ -254,39 +557,61 @@ local function onRecord(remote, a)
 		if typeof(a.CFrame) ~= "CFrame" or type(a.Name) ~= "string" then return end
 		local cf = a.CFrame
 		local p = (typeof(a.Pos) == "Vector3") and a.Pos or cf.Position
-		step = { type = "add", name = a.Name, unitId = a.UnitId, cframe = { cf:GetComponents() }, pos = { p.X, p.Y, p.Z }, delay = delay, price = 0 }
+		step = { type = "add", name = a.Name, unitId = a.UnitId, cframe = { cf:GetComponents() }, pos = { p.X, p.Y, p.Z }, delay = delay }
 	elseif remote == TowerUpgrade or remote == TowerSell then
 		if not a.Id then return end
 		local inst = findTowerById(a.Id)
 		local p = inst and posOf(inst)
-		if not p then status("หาตำแหน่งตัวละครไม่เจอ ข้ามสเต็ปนี้") return end
-		step = { type = (remote == TowerUpgrade) and "upgrade" or "sell", tpos = { p.X, p.Y, p.Z }, delay = delay, price = 0 }
+		if not p then status("tower_pos_missing") return end
+		step = { type = (remote == TowerUpgrade) and "upgrade" or "sell", tpos = { p.X, p.Y, p.Z }, delay = delay }
 	else
 		return
 	end
 	table.insert(steps, step)
+	recompute()
+	local idx = #steps
+	local m = meta[idx]
 	UI.refresh()
-	status("Recording... " .. #steps .. " steps")
-	if before and step.type ~= "sell" then
+	status("rec_progress", #steps)
+	if before and step.type ~= "sell" and m then
 		task.spawn(function()
 			local d = measureDrop(before, 3)
-			if d > 0 then step.price = d UI.refresh() end
+			if d > 0 then
+				local p = pslot(m.unit, m.stage, true)
+				if not (CFG.priceLockAll or p.locked) then p.price = d end
+				UI.refresh()
+			end
 		end)
 	end
 end
 
-local function waitMoney(step, alive, idx)
-	local price = step.price or 0
+--------------------------------------------------------------------------
+-- เล่น
+--------------------------------------------------------------------------
+local function waitReady(alive)
+	while alive() and not (TowerAdd and TowerUpgrade and TowerSell) do
+		phase = "match"
+		task.wait(0.5)
+	end
+	phase = "act"
+	return alive()
+end
+
+local function waitMoney(step, price, alive)
 	if step.type == "sell" or price <= 0 then return true end
 	local t0 = os.clock()
 	while alive() do
 		local m = getMoney()
 		if m == nil then
 			if CFG.useDelay and step.delay then task.wait(math.min(step.delay, 30)) end
+			phase = "act"
 			return true
 		end
-		if m >= price then return true end
-		status(string.format("Step %d รอเงิน %s / %s", idx or 0, fmt(m), fmt(price)))
+		if m >= price then
+			phase = "act"
+			return true
+		end
+		phase = "money"
 		if CFG.moneyTimeout > 0 and os.clock() - t0 > CFG.moneyTimeout then return false end
 		task.wait(0.15)
 	end
@@ -294,12 +619,11 @@ local function waitMoney(step, alive, idx)
 end
 
 local function attemptAdd(step, alive, vt)
-	if not TowerAdd then return false, 0, "remote ไม่พร้อม (เข้าแมตช์ก่อน)" end
 	local id = unitIdFor(step)
-	if not id then return false, 0, "ไม่พบยูนิต " .. tostring(step.name) .. " ใน Slot" end
+	if not id then return false, 0, "unit not in slots: " .. tostring(step.name) end
 	local pos = Vector3.new(unpack(step.pos))
 	local cf = CFrame.new(unpack(step.cframe))
-	if (nearCount(pos, 2) or 0) >= 1 then return true, 0, "มีตัวอยู่แล้ว" end
+	if (nearCount(pos, 2) or 0) >= 1 then return true, 0, "already placed" end
 	local base = nearCount(pos, 3) or 0
 	local before = getMoney()
 	TowerAdd:FireServer({ UnitId = id, CFrame = cf, Name = step.name, Pos = pos })
@@ -318,14 +642,13 @@ local function attemptAdd(step, alive, vt)
 		if n == nil and drop > 0 then return true, drop end
 		if n == nil and before == nil and os.clock() - t > 0.6 then return true, 0 end
 	end
-	return false, drop, "วางไม่สำเร็จ"
+	return false, drop, "not placed"
 end
 
-local function attemptTarget(step, alive, vt)
-	if not (TowerUpgrade and TowerSell) then return false, 0, "remote ไม่พร้อม (เข้าแมตช์ก่อน)" end
-	if not step.tpos then return false, 0, "ไม่มีตำแหน่ง" end
+local function attemptTarget(step, price, alive, vt)
+	if not step.tpos then return false, 0, "no position" end
 	local id, inst = findNearestTower(Vector3.new(unpack(step.tpos)), 10)
-	if not id then return false, 0, "ไม่พบตัวละครตรงตำแหน่งนี้" end
+	if not id then return false, 0, "tower not found at position" end
 	local before = getMoney()
 	local t, drop = os.clock(), 0
 	if step.type == "upgrade" then
@@ -341,41 +664,43 @@ local function attemptTarget(step, alive, vt)
 				if before and m2 then drop = math.max(drop, before - m2) end
 				return true, drop
 			end
-			if (step.price or 0) > 0 and drop >= step.price * 0.9 then return true, drop end
+			if price > 0 and drop >= price * 0.9 then return true, drop end
 		end
-		return false, drop, "อัพไม่สำเร็จ"
+		return false, drop, "upgrade not confirmed"
 	else
 		TowerSell:FireServer({ Id = id })
 		while alive() and os.clock() - t < vt do
 			task.wait(0.05)
 			if not inst.Parent or not inst:IsDescendantOf(workspace) then return true, 0 end
 		end
-		return false, 0, "ขายไม่สำเร็จ"
+		return false, 0, "not sold"
 	end
 end
 
 local function execStep(step, alive, idx)
 	local retry = math.max(1, tonumber(CFG.retry) or 3)
 	local vt = tonumber(CFG.verifyTimeout) or 3
+	if not waitReady(alive) then return false end
 	for attempt = 1, retry do
 		if not alive() then return false end
-		local g = waitMoney(step, alive, idx)
+		local price = priceOf(idx)
+		local g = waitMoney(step, price, alive)
 		if g == "stop" then return false end
 		if g == false then
-			warn("[JetHub Camera] step " .. tostring(idx) .. " รอเงินหมดเวลา")
+			warn("[JetHub Camera] step " .. tostring(idx) .. " money wait timed out")
 			return false
 		end
 		local ok, drop, why
 		if step.type == "add" then ok, drop, why = attemptAdd(step, alive, vt)
-		else ok, drop, why = attemptTarget(step, alive, vt) end
+		else ok, drop, why = attemptTarget(step, price, alive, vt) end
 		if ok then
-			if drop and drop > 0 and CFG.autoLearn and not (CFG.priceLockAll or step.locked) then
-				step.price = drop
+			if drop and drop > 0 and CFG.autoLearn then
+				setLearned(idx, drop)
 				UI.refresh()
 			end
 			return true
 		end
-		warn(string.format("[JetHub Camera] step %s ลองครั้งที่ %d: %s", tostring(idx), attempt, tostring(why)))
+		warn(string.format("[JetHub Camera] step %s attempt %d: %s", tostring(idx), attempt, tostring(why)))
 		task.wait(0.4)
 	end
 	return false
@@ -384,33 +709,59 @@ end
 local function stopMacro()
 	running = false
 	runId = runId + 1
+	phase = "act"
 end
 
 local function runMacro(startIdx)
 	if running or recording then return false end
-	if #steps == 0 then status("ยังไม่มีสเต็ป (อัดก่อน หรือโหลดมาโคร)") return false end
+	if #steps == 0 then status("no_steps") return false end
+	recompute()
 	running = true
 	runId = runId + 1
 	local my = runId
 	local function alive() return running and my == runId end
 	task.spawn(function()
-		for i = startIdx or 1, #steps do
+		repeat
+			for i = startIdx or 1, #steps do
+				if not alive() then break end
+				curIdx = i
+				local ok = execStep(steps[i], alive, i)
+				if not ok and alive() then status("step_skipped", i) end
+			end
+			startIdx = 1
 			if not alive() then break end
-			local s = steps[i]
-			status(string.format("Step %d/%d  %s", i, #steps, s.type))
-			local ok = execStep(s, alive, i)
-			if not ok and alive() then status(string.format("Step %d ข้าม (ไม่สำเร็จ)", i)) end
-		end
-		if my == runId then
+			curIdx = #steps + 1
+			if flags.loop then
+				-- รอแมตช์ใหม่ (ตัวละครในแมพถูกล้างจนเหลือ 0) แล้วเริ่มใหม่
+				phase = "loop"
+				local seen, t0 = false, os.clock()
+				while alive() do
+					local f = towersFolder()
+					local n = f and #f:GetChildren() or 0
+					if n > 0 then seen = true end
+					if (seen or os.clock() - t0 > 5) and n == 0 then break end
+					if not f and os.clock() - t0 > 10 then break end
+					task.wait(0.5)
+				end
+				phase = "act"
+				if alive() then curIdx = 0 end
+			end
+		until not (alive() and flags.loop)
+		if my == runId and running then
 			running = false
+			phase = "act"
+			flags.play = false
+			saveCfg()
 			UI.playOff()
-			status("เล่นจบแล้ว")
+			status("play_done")
 		end
 	end)
 	return true
 end
 
--- ไฟล์มาโคร --------------------------------------------------------------
+--------------------------------------------------------------------------
+-- ไฟล์มาโคร
+--------------------------------------------------------------------------
 local function ensureDir()
 	if makefolder and isfolder and not isfolder(DIR) then pcall(makefolder, DIR) end
 end
@@ -435,32 +786,52 @@ local function listMacros()
 end
 local function saveMacro(name)
 	name = cleanName(name)
-	if name == "" then status("ตั้งชื่อมาโครก่อน") return false end
-	if #steps == 0 then status("ไม่มีสเต็ปให้เซฟ") return false end
-	if not writefile then status("executor ไม่รองรับ writefile") return false end
+	if name == "" then status("name_first") return false end
+	if #steps == 0 then status("nothing_to_save") return false end
+	if not writefile then status("no_writefile") return false end
 	ensureDir()
-	writefile(filePath(name), HttpService:JSONEncode(steps))
+	writefile(filePath(name), HttpService:JSONEncode({ v = 2, steps = steps, prices = prices }))
 	CFG.selected = name
 	saveCfg()
-	status("เซฟ " .. name .. " แล้ว (" .. #steps .. " steps)")
+	status("saved", name, #steps)
 	return true
 end
 local function loadMacro(name)
-	if not (isfile and readfile and isfile(filePath(name))) then status("ไม่พบไฟล์ " .. tostring(name)) return false end
+	if not (isfile and readfile and isfile(filePath(name))) then status("file_missing", tostring(name)) return false end
 	local ok, t = pcall(function() return HttpService:JSONDecode(readfile(filePath(name))) end)
 	if ok and type(t) == "table" then
-		steps = t
+		if t.steps then
+			steps = t.steps
+			prices = t.prices or {}
+		else
+			-- รูปแบบเก่า (array ของสเต็ป พร้อม price ในสเต็ป)
+			steps = t
+			prices = {}
+			recompute()
+			for i, s in ipairs(steps) do
+				local m = meta[i]
+				if m and s.type ~= "sell" and (s.price or 0) > 0 then
+					local p = pslot(m.unit, m.stage, true)
+					if p.price == 0 then p.price = s.price end
+					if s.locked then p.locked = true end
+				end
+			end
+		end
+		recompute()
+		curIdx = 0
 		CFG.selected = name
 		saveCfg()
 		UI.refresh()
-		status("โหลด " .. name .. " (" .. #steps .. " steps)")
+		status("loaded", name, #steps)
 		return true
 	end
-	status("อ่านไฟล์ไม่ได้")
+	status("read_fail")
 	return false
 end
 
--- Hook ดักตอนเราวาง/อัพ/ขายเอง -------------------------------------------
+--------------------------------------------------------------------------
+-- Hook ดักตอนเราวาง/อัพ/ขายเอง
+--------------------------------------------------------------------------
 local hookOK = false
 if hookmetamethod and newcclosure and getnamecallmethod then
 	local old
@@ -481,14 +852,22 @@ if hookmetamethod and newcclosure and getnamecallmethod then
 end
 
 --------------------------------------------------------------------------
--- UI : JET HUB _ CAMERA
+-- UI helpers + อนิเมชั่น
 --------------------------------------------------------------------------
 local C = {
 	bg = Color3.fromRGB(8, 10, 24), side = Color3.fromRGB(13, 17, 38), row = Color3.fromRGB(20, 26, 56),
 	sel = Color3.fromRGB(34, 46, 104), text = Color3.fromRGB(235, 240, 255), sub = Color3.fromRGB(125, 140, 190),
 	acc = Color3.fromRGB(0, 200, 255), acc2 = Color3.fromRGB(255, 140, 40), ok = Color3.fromRGB(70, 225, 130),
-	warn = Color3.fromRGB(255, 205, 70), bad = Color3.fromRGB(255, 85, 105), off = Color3.fromRGB(50, 58, 110),
+	warn = Color3.fromRGB(255, 205, 70), bad = Color3.fromRGB(255, 85, 105), off = Color3.fromRGB(52, 60, 112),
 }
+local QUAD, QUINT, BACK = Enum.EasingStyle.Quad, Enum.EasingStyle.Quint, Enum.EasingStyle.Back
+local OUT = Enum.EasingDirection.Out
+
+local function tw(o, t, props, style, dir)
+	local tween = TweenService:Create(o, TweenInfo.new(t, style or QUAD, dir or OUT), props)
+	tween:Play()
+	return tween
+end
 
 local function new(cls, props, parent)
 	local o = Instance.new(cls)
@@ -506,95 +885,197 @@ local function txt(parent, t, props)
 	}, parent)
 	return apply(l, props)
 end
-local function btn(parent, t, props, cb)
+local function txtK(parent, key, props, ...)
+	local l = txt(parent, "", props)
+	bind(l, "Text", key, ...)
+	return l
+end
+
+local function hoverable(b, useScale)
+	b:SetAttribute("base", b.BackgroundColor3)
+	local sc = useScale and new("UIScale", { Scale = 1 }, b) or nil
+	b.MouseEnter:Connect(function()
+		tw(b, 0.12, { BackgroundColor3 = b:GetAttribute("base"):Lerp(Color3.new(1, 1, 1), 0.14) })
+	end)
+	b.MouseLeave:Connect(function()
+		tw(b, 0.15, { BackgroundColor3 = b:GetAttribute("base") })
+		if sc then tw(sc, 0.1, { Scale = 1 }) end
+	end)
+	if sc then
+		b.MouseButton1Down:Connect(function() tw(sc, 0.08, { Scale = 0.96 }) end)
+		b.MouseButton1Up:Connect(function() tw(sc, 0.14, { Scale = 1 }, BACK) end)
+	end
+end
+local function setBtn(b, bg, fg)
+	b:SetAttribute("base", bg)
+	tw(b, 0.2, { BackgroundColor3 = bg, TextColor3 = fg or b.TextColor3 })
+end
+
+local function btn(parent, t, props, cb, small)
 	local b = new("TextButton", {
 		Text = t, BackgroundColor3 = C.sel, TextColor3 = C.text, Font = Enum.Font.GothamBold,
-		TextSize = 12, AutoButtonColor = true, BorderSizePixel = 0,
+		TextSize = 12, AutoButtonColor = false, BorderSizePixel = 0,
 	}, parent)
-	corner(b, 6)
+	corner(b, 7)
 	apply(b, props)
+	hoverable(b, not small)
 	if cb then b.MouseButton1Click:Connect(cb) end
 	return b
 end
+local function btnK(parent, key, props, cb, small, ...)
+	local b = btn(parent, "", props, cb, small)
+	bind(b, "Text", key, ...)
+	return b
+end
+
 local function box(parent, text, props, onDone)
 	local b = new("TextBox", {
 		Text = text or "", BackgroundColor3 = C.bg, TextColor3 = C.text, PlaceholderColor3 = C.sub,
 		Font = Enum.Font.Gotham, TextSize = 12, ClearTextOnFocus = false, BorderSizePixel = 0,
 	}, parent)
-	corner(b, 6)
-	apply(b, props)
-	if onDone then b.FocusLost:Connect(function() onDone(b.Text, b) end) end
-	return b
+	corner(b, 7)
+	local st = new("UIStroke", { Color = C.acc, Thickness = 1, Transparency = 1 }, b)
+	b.Focused:Connect(function() tw(st, 0.15, { Transparency = 0.2 }) end)
+	b.FocusLost:Connect(function()
+		tw(st, 0.2, { Transparency = 1 })
+		if onDone then onDone(b.Text, b) end
+	end)
+	return apply(b, props)
 end
-local function toggle(parent, text, init, props, cb)
+
+-- สวิตช์แบบใหม่: แถบสีด้านซ้าย + สวิตช์ยืด/เด้ง + glow
+local function toggle(parent, labelKey, init, props, cb, descKey)
 	local row = new("Frame", { BackgroundColor3 = C.row, BorderSizePixel = 0 }, parent)
-	corner(row, 8)
+	corner(row, 10)
 	apply(row, props)
-	txt(row, text, { Size = UDim2.new(1, -64, 1, 0), Position = UDim2.fromOffset(10, 0) })
-	local sw = new("TextButton", { Text = "", Size = UDim2.fromOffset(40, 20), AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -10, 0.5, 0), BorderSizePixel = 0, AutoButtonColor = false }, row)
-	corner(sw, 10)
-	local knob = new("Frame", { Size = UDim2.fromOffset(16, 16), BackgroundColor3 = Color3.new(1, 1, 1), BorderSizePixel = 0 }, sw)
-	corner(knob, 8)
+	local accent = new("Frame", { Size = UDim2.new(0, 3, 0.5, 0), Position = UDim2.new(0, 0, 0.25, 0), BackgroundColor3 = C.acc, BackgroundTransparency = 1, BorderSizePixel = 0 }, row)
+	corner(accent, 2)
+	if descKey then
+		txtK(row, labelKey, { Size = UDim2.new(1, -86, 0, 20), Position = UDim2.fromOffset(14, 5), Font = Enum.Font.GothamBold })
+		txtK(row, descKey, { Size = UDim2.new(1, -86, 0, 16), Position = UDim2.fromOffset(14, 25), TextSize = 11, TextColor3 = C.sub })
+	else
+		txtK(row, labelKey, { Size = UDim2.new(1, -86, 1, 0), Position = UDim2.fromOffset(14, 0), Font = Enum.Font.GothamBold })
+	end
+	local track = new("TextButton", {
+		Text = "", Size = UDim2.fromOffset(48, 24), AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -12, 0.5, 0),
+		BackgroundColor3 = C.off, BorderSizePixel = 0, AutoButtonColor = false,
+	}, row)
+	corner(track, 12)
+	local glow = new("UIStroke", { Color = C.acc, Thickness = 2, Transparency = 1 }, track)
+	local knob = new("Frame", { Size = UDim2.fromOffset(18, 18), Position = UDim2.fromOffset(3, 3), BackgroundColor3 = Color3.new(1, 1, 1), BorderSizePixel = 0 }, track)
+	corner(knob, 9)
 	local state = false
+	local function visual(v, animate)
+		local d = animate and 0.22 or 0
+		local x = v and 27 or 3
+		if animate then
+			-- ยืดตามทิศทางก่อน แล้วค่อยเด้งเข้าที่
+			tw(knob, 0.09, { Size = UDim2.fromOffset(26, 18), Position = UDim2.fromOffset(v and 19 or 3, 3) })
+			task.delay(0.09, function()
+				tw(knob, 0.2, { Size = UDim2.fromOffset(18, 18), Position = UDim2.fromOffset(v and 27 or 3, 3) }, BACK)
+			end)
+		else
+			knob.Size = UDim2.fromOffset(18, 18)
+			knob.Position = UDim2.fromOffset(x, 3)
+		end
+		tw(track, d, { BackgroundColor3 = v and C.acc or C.off })
+		tw(glow, d, { Transparency = v and 0.55 or 1 })
+		tw(accent, d, { BackgroundTransparency = v and 0 or 1 })
+	end
 	local function set(v, silent)
 		state = v and true or false
-		sw.BackgroundColor3 = state and C.acc or C.off
-		knob.Position = state and UDim2.fromOffset(22, 2) or UDim2.fromOffset(2, 2)
+		visual(state, not silent)
 		if not silent and cb then cb(state) end
 	end
-	sw.MouseButton1Click:Connect(function() set(not state) end)
-	set(init, true)
+	track.MouseButton1Click:Connect(function() set(not state) end)
+	row.MouseEnter:Connect(function() tw(row, 0.12, { BackgroundColor3 = C.row:Lerp(Color3.new(1, 1, 1), 0.06) }) end)
+	row.MouseLeave:Connect(function() tw(row, 0.15, { BackgroundColor3 = C.row }) end)
+	state = init and true or false
+	visual(state, false)
 	return set, row
 end
+
 local function counter()
 	local n = 0
 	return function() n = n + 1 return n end
 end
 
+--------------------------------------------------------------------------
+-- Window
+--------------------------------------------------------------------------
 local guiParent = (gethui and gethui()) or game:GetService("CoreGui")
-local oldGui = guiParent:FindFirstChild("JetHubCameraGui")
+local oldGui = guiParent:FindFirstChild("JetHubCamera2Gui")
 if oldGui then oldGui:Destroy() end
+local oldGui1 = guiParent:FindFirstChild("JetHubCameraGui")
+if oldGui1 then oldGui1:Destroy() end
 
-local gui = new("ScreenGui", { Name = "JetHubCameraGui", ResetOnSpawn = false, ZIndexBehavior = Enum.ZIndexBehavior.Sibling }, guiParent)
+local gui = new("ScreenGui", { Name = "JetHubCamera2Gui", ResetOnSpawn = false, ZIndexBehavior = Enum.ZIndexBehavior.Sibling }, guiParent)
 
-local W, H, TITLE, FOOT, SIDE = 620, 430, 36, 26, 120
-local win = new("Frame", { Size = UDim2.fromOffset(W, H), Position = UDim2.fromOffset(60, 80), BackgroundColor3 = C.bg, BorderSizePixel = 0, ClipsDescendants = true }, gui)
-corner(win, 14)
+local W, H, TITLE, FOOT, SIDE = 680, 470, 40, 28, 140
+local win = new("Frame", { Size = UDim2.fromOffset(W, H), Position = UDim2.fromOffset(60, 70), BackgroundColor3 = C.bg, BorderSizePixel = 0, ClipsDescendants = true }, gui)
+corner(win, 16)
+local winScale = new("UIScale", { Scale = 1 }, win)
 
-local stroke = new("UIStroke", { Thickness = 1.5, Color = Color3.new(1, 1, 1) }, win)
+local stroke = new("UIStroke", { Thickness = 1.6, Color = Color3.new(1, 1, 1) }, win)
 local grad = new("UIGradient", { Color = ColorSequence.new({
 	ColorSequenceKeypoint.new(0, C.acc), ColorSequenceKeypoint.new(0.5, C.acc2), ColorSequenceKeypoint.new(1, C.acc),
 }) }, stroke)
 
 local title = new("Frame", { Size = UDim2.new(1, 0, 0, TITLE), BackgroundColor3 = C.side, BorderSizePixel = 0 }, win)
-local logo = txt(title, "JET", { Size = UDim2.fromOffset(46, TITLE), Position = UDim2.fromOffset(12, 0), Font = Enum.Font.GothamBlack, TextSize = 20 })
-new("UIGradient", { Color = ColorSequence.new(C.acc, C.acc2) }, logo)
-txt(title, "HUB _ Camera", { Size = UDim2.new(0.5, 0, 1, 0), Position = UDim2.fromOffset(58, 0), Font = Enum.Font.GothamBold, TextSize = 13, TextColor3 = C.sub })
-local moneyLbl = txt(title, "$ --", { Size = UDim2.new(0.4, -12, 1, 0), Position = UDim2.new(0.6, 0, 0, 0), TextXAlignment = Enum.TextXAlignment.Right, Font = Enum.Font.GothamBold, TextColor3 = C.ok })
+local logo = txt(title, "JET", { Size = UDim2.fromOffset(50, TITLE), Position = UDim2.fromOffset(14, 0), Font = Enum.Font.GothamBlack, TextSize = 22 })
+local logoGrad = new("UIGradient", { Color = ColorSequence.new(C.acc, C.acc2) }, logo)
+txt(title, "HUB _ Camera", { Size = UDim2.new(0.5, 0, 1, 0), Position = UDim2.fromOffset(64, 0), Font = Enum.Font.GothamBold, TextSize = 13, TextColor3 = C.sub })
+local moneyLbl = txt(title, "$ --", { Size = UDim2.new(0.4, -14, 1, 0), Position = UDim2.new(0.6, 0, 0, 0), TextXAlignment = Enum.TextXAlignment.Right, Font = Enum.Font.GothamBold, TextColor3 = C.ok })
 
 local side = new("Frame", { Size = UDim2.new(0, SIDE, 1, -(TITLE + FOOT)), Position = UDim2.fromOffset(0, TITLE), BackgroundColor3 = C.side, BorderSizePixel = 0 }, win)
 local content = new("Frame", { Size = UDim2.new(1, -SIDE, 1, -(TITLE + FOOT)), Position = UDim2.fromOffset(SIDE, TITLE), BackgroundTransparency = 1 }, win)
 local foot = new("Frame", { Size = UDim2.new(1, 0, 0, FOOT), Position = UDim2.new(0, 0, 1, -FOOT), BackgroundColor3 = C.side, BorderSizePixel = 0 }, win)
-local statusLbl = txt(foot, "พร้อมใช้งาน", { Size = UDim2.new(1, -16, 1, 0), Position = UDim2.fromOffset(10, 0), TextSize = 12, TextColor3 = C.sub })
-UI.status = function(m) statusLbl.Text = tostring(m) end
+statusLbl = txt(foot, T("ready"), { Size = UDim2.new(1, -20, 1, 0), Position = UDim2.fromOffset(12, 0), TextSize = 12, TextColor3 = C.sub })
 
+-- Tabs ----------------------------------------------------------------
+local TAB_H, TAB_Y0 = 36, 10
 local tabs = {}
-local function newPage(name, order)
-	local page = new("Frame", { Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, Visible = false }, content)
+local indicator = new("Frame", { Size = UDim2.new(1, -14, 0, TAB_H), Position = UDim2.fromOffset(7, TAB_Y0), BackgroundColor3 = C.sel, BorderSizePixel = 0 }, side)
+corner(indicator, 9)
+local indBar = new("Frame", { Size = UDim2.new(0, 3, 0.55, 0), Position = UDim2.new(0, 3, 0.225, 0), BackgroundColor3 = C.acc, BorderSizePixel = 0 }, indicator)
+corner(indBar, 2)
+
+local function showTab(i, animate)
+	for j, t in ipairs(tabs) do
+		t.btn.TextColor3 = (j == i) and C.text or C.sub
+		if j ~= i then t.page.Visible = false end
+	end
+	local cur = tabs[i]
+	cur.page.Visible = true
+	local y = TAB_Y0 + (i - 1) * (TAB_H + 4)
+	if animate then
+		cur.page.GroupTransparency = 1
+		cur.page.Position = UDim2.fromOffset(0, 14)
+		tw(cur.page, 0.3, { GroupTransparency = 0, Position = UDim2.fromOffset(0, 0) }, QUINT)
+		tw(indicator, 0.3, { Position = UDim2.fromOffset(7, y) }, QUINT)
+	else
+		cur.page.GroupTransparency = 0
+		cur.page.Position = UDim2.fromOffset(0, 0)
+		indicator.Position = UDim2.fromOffset(7, y)
+	end
+	CFG.tab = i
+end
+
+local function newPage(key)
+	local idx = #tabs + 1
+	local page = new("CanvasGroup", { Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, Visible = false }, content)
 	local b = new("TextButton", {
-		Size = UDim2.new(1, -12, 0, 34), Position = UDim2.fromOffset(6, 10 + (order - 1) * 40), BackgroundColor3 = C.sel,
-		BackgroundTransparency = 1, Text = "  " .. name, TextXAlignment = Enum.TextXAlignment.Left, TextColor3 = C.sub,
+		Size = UDim2.new(1, -14, 0, TAB_H), Position = UDim2.fromOffset(7, TAB_Y0 + (idx - 1) * (TAB_H + 4)),
+		BackgroundTransparency = 1, Text = "", TextXAlignment = Enum.TextXAlignment.Left, TextColor3 = C.sub,
 		Font = Enum.Font.GothamBold, TextSize = 13, AutoButtonColor = false, BorderSizePixel = 0,
 	}, side)
-	corner(b, 8)
-	local t = { page = page, btn = b }
-	tabs[#tabs + 1] = t
+	new("UIPadding", { PaddingLeft = UDim.new(0, 16) }, b)
+	bind(b, "Text", key)
+	tabs[idx] = { page = page, btn = b }
+	b.MouseEnter:Connect(function() if CFG.tab ~= idx then tw(b, 0.12, { TextColor3 = C.text }) end end)
+	b.MouseLeave:Connect(function() if CFG.tab ~= idx then tw(b, 0.15, { TextColor3 = C.sub }) end end)
 	b.MouseButton1Click:Connect(function()
-		for _, x in ipairs(tabs) do
-			x.page.Visible = (x == t)
-			x.btn.BackgroundTransparency = (x == t) and 0 or 1
-			x.btn.TextColor3 = (x == t) and C.text or C.sub
-		end
+		if CFG.tab ~= idx then showTab(idx, true) saveCfg() end
 	end)
 	return page
 end
@@ -604,229 +1085,148 @@ local function scrollList(parent)
 		BackgroundTransparency = 1, BorderSizePixel = 0, ScrollBarThickness = 3, AutomaticCanvasSize = Enum.AutomaticSize.Y,
 		CanvasSize = UDim2.new(), Size = UDim2.new(1, -12, 1, -12), Position = UDim2.fromOffset(6, 6),
 	}, parent)
-	new("UIListLayout", { Padding = UDim.new(0, 4), SortOrder = Enum.SortOrder.LayoutOrder }, s)
+	new("UIListLayout", { Padding = UDim.new(0, 5), SortOrder = Enum.SortOrder.LayoutOrder }, s)
 	return s
 end
 
 local function hbar(parent, props)
 	local f = new("Frame", { BackgroundTransparency = 1 }, parent)
 	apply(f, props)
-	new("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal, Padding = UDim.new(0, 4) }, f)
+	new("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal, Padding = UDim.new(0, 5) }, f)
 	return f
 end
 
-local function numRow(scroll, nextOrd, label, key)
-	local row = new("Frame", { Size = UDim2.new(1, -6, 0, 34), BackgroundColor3 = C.row, BorderSizePixel = 0, LayoutOrder = nextOrd() }, scroll)
-	corner(row, 8)
-	txt(row, label, { Size = UDim2.new(0.62, -10, 1, 0), Position = UDim2.fromOffset(10, 0) })
-	box(row, tostring(CFG[key]), { Size = UDim2.new(0.38, -14, 0, 24), Position = UDim2.new(0.62, 4, 0.5, -12) }, function(t, b)
+local function numRow(scroll, nextOrd, labelKey, key)
+	local row = new("Frame", { Size = UDim2.new(1, -6, 0, 36), BackgroundColor3 = C.row, BorderSizePixel = 0, LayoutOrder = nextOrd() }, scroll)
+	corner(row, 10)
+	txtK(row, labelKey, { Size = UDim2.new(0.62, -10, 1, 0), Position = UDim2.fromOffset(14, 0) })
+	box(row, tostring(CFG[key]), { Size = UDim2.new(0.38, -18, 0, 26), Position = UDim2.new(0.62, 4, 0.5, -13), TextXAlignment = Enum.TextXAlignment.Center }, function(t, b)
 		local n = tonumber(t)
 		if n then CFG[key] = n saveCfg() end
 		b.Text = tostring(CFG[key])
 	end)
 end
 
-------------------------------------------------------------------------
--- PAGE: Game  (Vote / Speed / Skip / Play Again)
-------------------------------------------------------------------------
-local flags = { vote = false, speed = false, skip = false, again = false }
-
-local pGame = newPage("Game", 1)
+--------------------------------------------------------------------------
+-- PAGE: Game
+--------------------------------------------------------------------------
+local pGame = newPage("tab_game")
 local gScroll = scrollList(pGame)
 local go = counter()
 
-txt(gScroll, "Vote mode (กดเพื่อโหวตทันที)", { Size = UDim2.new(1, -6, 0, 20), TextColor3 = C.sub, TextSize = 12, LayoutOrder = go() })
-local modeBar = hbar(gScroll, { Size = UDim2.new(1, -6, 0, 30), LayoutOrder = go() })
+txtK(gScroll, "vote_hdr", { Size = UDim2.new(1, -6, 0, 18), TextColor3 = C.sub, TextSize = 12, LayoutOrder = go() })
+local modeBar = hbar(gScroll, { Size = UDim2.new(1, -6, 0, 32), LayoutOrder = go() })
 local modeBtns = {}
 local function paintModes()
 	for m, b in pairs(modeBtns) do
-		b.BackgroundColor3 = (m == CFG.voteMode) and C.acc or C.sel
-		b.TextColor3 = (m == CFG.voteMode) and C.bg or C.text
+		local on = (m == CFG.voteMode)
+		setBtn(b, on and C.acc or C.sel, on and C.bg or C.text)
 	end
 end
 for _, m in ipairs({ "Easy", "Normal", "Hard", "Insane" }) do
-	modeBtns[m] = btn(modeBar, m, { Size = UDim2.new(0.25, -3, 1, 0) }, function()
+	modeBtns[m] = btnK(modeBar, "mode_" .. m, { Size = UDim2.new(0.25, -4, 1, 0) }, function()
 		CFG.voteMode = m
 		saveCfg()
 		paintModes()
-		local ok = fireEvent("ModeVote", m)
-		status(ok and ("โหวต " .. m) or "ไม่พบ remote ModeVote (อยู่ในแมตช์หรือยัง?)")
+		if fireEvent("ModeVote", m) then status("voted", T("mode_" .. m)) else status("no_remote", "ModeVote") end
 	end)
 end
 paintModes()
-toggle(gScroll, "Auto Vote (โหวตซ้ำตามเวลา)", false, { Size = UDim2.new(1, -6, 0, 34), LayoutOrder = go() }, function(v) flags.vote = v end)
-numRow(gScroll, go, "Vote ทุกกี่วินาที", "voteInterval")
+toggle(gScroll, "auto_vote", flags.vote, { Size = UDim2.new(1, -6, 0, 46), LayoutOrder = go() }, function(v) flags.vote = v saveCfg() end, "auto_vote_d")
+numRow(gScroll, go, "vote_every", "voteInterval")
 
-txt(gScroll, "Speed (กดเพื่อเปลี่ยนทันที)", { Size = UDim2.new(1, -6, 0, 20), TextColor3 = C.sub, TextSize = 12, LayoutOrder = go() })
-local speedBar = hbar(gScroll, { Size = UDim2.new(1, -6, 0, 30), LayoutOrder = go() })
+txtK(gScroll, "speed_hdr", { Size = UDim2.new(1, -6, 0, 18), TextColor3 = C.sub, TextSize = 12, LayoutOrder = go() })
+local speedBar = hbar(gScroll, { Size = UDim2.new(1, -6, 0, 32), LayoutOrder = go() })
 local speedBtns = {}
 local function paintSpeed()
 	for s, b in pairs(speedBtns) do
-		b.BackgroundColor3 = (s == CFG.speed) and C.acc or C.sel
-		b.TextColor3 = (s == CFG.speed) and C.bg or C.text
+		local on = (s == CFG.speed)
+		setBtn(b, on and C.acc or C.sel, on and C.bg or C.text)
 	end
 end
 for _, s in ipairs({ 1, 1.5, 2 }) do
-	speedBtns[s] = btn(speedBar, "x" .. s, { Size = UDim2.new(1 / 3, -3, 1, 0) }, function()
+	speedBtns[s] = btn(speedBar, "x" .. s, { Size = UDim2.new(1 / 3, -4, 1, 0) }, function()
 		CFG.speed = s
 		saveCfg()
 		paintSpeed()
-		local ok = invokeFunc("ChangeSpeed", s)
-		status(ok and ("Speed x" .. s) or "ไม่พบ remote ChangeSpeed")
+		if invokeFunc("ChangeSpeed", s) then status("speed_set", tostring(s)) else status("no_remote", "ChangeSpeed") end
 	end)
 end
 paintSpeed()
-toggle(gScroll, "Auto Speed (ย้ำค่าความเร็วตามเวลา)", false, { Size = UDim2.new(1, -6, 0, 34), LayoutOrder = go() }, function(v) flags.speed = v end)
-numRow(gScroll, go, "Speed ย้ำทุกกี่วินาที", "speedInterval")
+toggle(gScroll, "auto_speed", flags.speed, { Size = UDim2.new(1, -6, 0, 46), LayoutOrder = go() }, function(v) flags.speed = v saveCfg() end, "auto_speed_d")
+numRow(gScroll, go, "speed_every", "speedInterval")
 
-toggle(gScroll, "Auto Skip Wave", false, { Size = UDim2.new(1, -6, 0, 34), LayoutOrder = go() }, function(v) flags.skip = v end)
-numRow(gScroll, go, "Skip ทุกกี่วินาที", "skipInterval")
+toggle(gScroll, "auto_skip", flags.skip, { Size = UDim2.new(1, -6, 0, 46), LayoutOrder = go() }, function(v) flags.skip = v saveCfg() end, "auto_skip_d")
+numRow(gScroll, go, "skip_every", "skipInterval")
 
-toggle(gScroll, "Auto Play Again", false, { Size = UDim2.new(1, -6, 0, 34), LayoutOrder = go() }, function(v) flags.again = v end)
-numRow(gScroll, go, "Play Again ทุกกี่วินาที", "againInterval")
+toggle(gScroll, "auto_again", flags.again, { Size = UDim2.new(1, -6, 0, 46), LayoutOrder = go() }, function(v) flags.again = v saveCfg() end, "auto_again_d")
+numRow(gScroll, go, "again_every", "againInterval")
 
-------------------------------------------------------------------------
--- PAGE: Steps
-------------------------------------------------------------------------
-local pSteps = newPage("Steps", 2)
-local stepsStatus
+txtK(gScroll, "remember_note", { Size = UDim2.new(1, -6, 0, 20), TextColor3 = C.sub, TextSize = 11, LayoutOrder = go() })
 
-local bar3 = hbar(pSteps, { Size = UDim2.new(1, -12, 0, 30), Position = UDim2.fromOffset(6, 6) })
-toggle(bar3, "Lock ALL prices", CFG.priceLockAll, { Size = UDim2.new(0.5, -2, 1, 0) }, function(v)
-	CFG.priceLockAll = v
-	saveCfg()
-end)
-toggle(bar3, "Auto-learn price", CFG.autoLearn, { Size = UDim2.new(0.5, -2, 1, 0) }, function(v)
-	CFG.autoLearn = v
-	saveCfg()
-end)
-
-local bar4 = hbar(pSteps, { Size = UDim2.new(1, -12, 0, 26), Position = UDim2.fromOffset(6, 40) })
-stepsStatus = txt(bar4, "", { Size = UDim2.new(0.6, 0, 1, 0), TextColor3 = C.sub, TextSize = 12 })
-btn(bar4, "Clear all", { Size = UDim2.new(0.4, -4, 1, 0), BackgroundColor3 = C.bad }, function()
-	if running or recording then status("หยุดอัด/เล่นก่อน") return end
-	steps = {}
-	UI.refresh()
-end)
-
-local stepList = new("ScrollingFrame", {
-	Size = UDim2.new(1, -12, 1, -74), Position = UDim2.fromOffset(6, 70), BackgroundColor3 = C.side, BorderSizePixel = 0,
-	ScrollBarThickness = 3, AutomaticCanvasSize = Enum.AutomaticSize.Y, CanvasSize = UDim2.new(),
-}, pSteps)
-corner(stepList, 8)
-new("UIListLayout", { Padding = UDim.new(0, 3), SortOrder = Enum.SortOrder.LayoutOrder }, stepList)
-new("UIPadding", { PaddingTop = UDim.new(0, 3), PaddingLeft = UDim.new(0, 3), PaddingRight = UDim.new(0, 3), PaddingBottom = UDim.new(0, 3) }, stepList)
-
-local TYPE_LBL = { add = "PLACE", upgrade = "UP", sell = "SELL" }
-
-local function nameForStep(s)
-	if s.type == "add" then return s.name or "?" end
-	if s.tpos then
-		local tp = Vector3.new(unpack(s.tpos))
-		for _, o in ipairs(steps) do
-			if o.type == "add" and o.pos and (Vector3.new(unpack(o.pos)) - tp).Magnitude <= 6 then return o.name end
-		end
-	end
-	return "tower"
-end
-
-local refreshPending = false
-local function refreshSteps()
-	for _, ch in ipairs(stepList:GetChildren()) do
-		if ch:IsA("Frame") then ch:Destroy() end
-	end
-	for i, s in ipairs(steps) do
-		local row = new("Frame", { Size = UDim2.new(1, -6, 0, 30), BackgroundColor3 = C.row, BorderSizePixel = 0, LayoutOrder = i }, stepList)
-		corner(row, 6)
-		txt(row, string.format("#%d %s %s", i, TYPE_LBL[s.type] or s.type, nameForStep(s)), { Size = UDim2.fromOffset(170, 30), Position = UDim2.fromOffset(6, 0), TextSize = 12 })
-
-		if s.type ~= "sell" then
-			box(row, string.format("%.0f", s.price or 0), { Size = UDim2.fromOffset(96, 22), Position = UDim2.fromOffset(180, 4), TextXAlignment = Enum.TextXAlignment.Center }, function(t)
-				local n = parseNum(t)
-				if n then
-					s.price = n
-					s.locked = true -- แก้เองแล้วล็อคให้อัตโนมัติ
-				end
-				UI.refresh()
-			end)
-			local lk = btn(row, s.locked and "LOCK" or "free", { Size = UDim2.fromOffset(44, 22), Position = UDim2.fromOffset(280, 4), BackgroundColor3 = s.locked and C.acc or C.off, TextColor3 = s.locked and C.bg or C.text })
-			lk.MouseButton1Click:Connect(function()
-				s.locked = not s.locked
-				UI.refresh()
-			end)
-		else
-			txt(row, "(ไม่มีราคา)", { Size = UDim2.fromOffset(140, 30), Position = UDim2.fromOffset(184, 0), TextColor3 = C.sub, TextSize = 11 })
-		end
-
-		btn(row, "^", { Size = UDim2.fromOffset(24, 22), Position = UDim2.fromOffset(328, 4) }, function()
-			if i > 1 then steps[i], steps[i - 1] = steps[i - 1], steps[i] UI.refresh() end
-		end)
-		btn(row, "v", { Size = UDim2.fromOffset(24, 22), Position = UDim2.fromOffset(356, 4) }, function()
-			if i < #steps then steps[i], steps[i + 1] = steps[i + 1], steps[i] UI.refresh() end
-		end)
-		btn(row, "x", { Size = UDim2.fromOffset(24, 22), Position = UDim2.fromOffset(384, 4), BackgroundColor3 = C.bad }, function()
-			table.remove(steps, i)
-			UI.refresh()
-		end)
-		btn(row, "Do", { Size = UDim2.fromOffset(44, 22), Position = UDim2.fromOffset(412, 4), BackgroundColor3 = C.acc2 }, function()
-			if running or recording then status("หยุดอัด/เล่นก่อนถึงจะใช้ปุ่ม Do ได้") return end
-			task.spawn(function()
-				local t0 = os.clock()
-				local ok = execStep(s, function() return os.clock() - t0 < 20 end, i)
-				status(ok and ("Step " .. i .. " สำเร็จ") or ("Step " .. i .. " ไม่สำเร็จ"))
-			end)
-		end)
-	end
-	stepsStatus.Text = "Steps: " .. #steps
-end
-UI.refresh = function()
-	if refreshPending then return end
-	refreshPending = true
-	task.defer(function()
-		refreshPending = false
-		pcall(refreshSteps)
-	end)
-end
-
-------------------------------------------------------------------------
--- PAGE: Macro
-------------------------------------------------------------------------
-local pMacro = newPage("Macro", 3)
+--------------------------------------------------------------------------
+-- PAGE: Macro (การ์ดสถานะ + ปุ่มอัด/เล่น)
+--------------------------------------------------------------------------
+local pMacro = newPage("tab_macro")
 local mScroll = scrollList(pMacro)
 local mo = counter()
 
-local recSet, playSet
-recSet = toggle(mScroll, "Record (อัดสเต็ป)", false, { Size = UDim2.new(1, -6, 0, 34), LayoutOrder = mo() }, function(v)
+local card = new("Frame", { Size = UDim2.new(1, -6, 0, 112), BackgroundColor3 = C.row, BorderSizePixel = 0, LayoutOrder = mo() }, mScroll)
+corner(card, 12)
+local cardStroke = new("UIStroke", { Color = C.acc, Thickness = 1.2, Transparency = 0.6 }, card)
+local dot = new("Frame", { Size = UDim2.fromOffset(9, 9), Position = UDim2.fromOffset(14, 13), BackgroundColor3 = C.sub, BorderSizePixel = 0 }, card)
+corner(dot, 5)
+local cStateLbl = txt(card, "", { Size = UDim2.new(0.6, 0, 0, 18), Position = UDim2.fromOffset(30, 8), Font = Enum.Font.GothamBold, TextSize = 12, TextColor3 = C.sub })
+local cCountLbl = txt(card, "", { Size = UDim2.new(0.4, -14, 0, 18), Position = UDim2.new(0.6, 0, 0, 8), TextXAlignment = Enum.TextXAlignment.Right, TextSize = 12, TextColor3 = C.sub })
+local cL1 = txt(card, "", { Size = UDim2.new(1, -28, 0, 22), Position = UDim2.fromOffset(14, 28), Font = Enum.Font.GothamBold, TextSize = 14 })
+local cL2 = txt(card, "", { Size = UDim2.new(1, -28, 0, 16), Position = UDim2.fromOffset(14, 52), TextSize = 12, TextColor3 = C.sub })
+local cL3 = txt(card, "", { Size = UDim2.new(1, -28, 0, 16), Position = UDim2.fromOffset(14, 70), TextSize = 12, TextColor3 = C.sub })
+local barBg = new("Frame", { Size = UDim2.new(1, -28, 0, 6), Position = UDim2.fromOffset(14, 94), BackgroundColor3 = C.bg, BorderSizePixel = 0 }, card)
+corner(barBg, 3)
+local barFill = new("Frame", { Size = UDim2.new(0, 0, 1, 0), BackgroundColor3 = Color3.new(1, 1, 1), BorderSizePixel = 0 }, barBg)
+corner(barFill, 3)
+new("UIGradient", { Color = ColorSequence.new(C.acc, C.acc2) }, barFill)
+
+local recSet, playSet, loopSet
+recSet = toggle(mScroll, "record", false, { Size = UDim2.new(1, -6, 0, 46), LayoutOrder = mo() }, function(v)
 	if v then
-		if running then status("หยุดเล่นก่อน") recSet(false, true) return end
-		if not hookOK then status("executor ไม่รองรับ hookmetamethod — อัดไม่ได้") recSet(false, true) return end
-		steps = {}
+		if running then status("stop_first") recSet(false, true) return end
+		if not hookOK then status("no_hook") recSet(false, true) return end
+		steps, prices, meta = {}, {}, {}
+		curIdx = 0
 		lastT = os.clock()
 		recording = true
 		UI.refresh()
-		status("Recording... วาง/อัพ/ขาย ตามปกติได้เลย")
+		status("rec_started")
 	else
 		recording = false
 		UI.refresh()
-		status("หยุดอัด (" .. #steps .. " steps) — ไปแก้ราคาที่แท็บ Steps ได้")
+		status("rec_stopped", #steps)
 	end
-end)
+end, "record_d")
 
-playSet = toggle(mScroll, "Play (เงินพอ = ทำสเต็ปทันที)", false, { Size = UDim2.new(1, -6, 0, 34), LayoutOrder = mo() }, function(v)
+playSet = toggle(mScroll, "play", flags.play, { Size = UDim2.new(1, -6, 0, 46), LayoutOrder = mo() }, function(v)
+	flags.play = v
+	saveCfg()
 	if v then
-		if recording then status("ปิด Record ก่อน") playSet(false, true) return end
-		if not runMacro(1) then playSet(false, true) end
+		if recording then status("close_rec") flags.play = false playSet(false, true) return end
+		if not runMacro(1) then flags.play = false playSet(false, true) end
 	else
 		stopMacro()
-		status("หยุดเล่นแล้ว")
+		status("stopped")
 	end
-end)
+end, "play_d")
 UI.playOff = function() playSet(false, true) end
 
-local nameRow = new("Frame", { Size = UDim2.new(1, -6, 0, 32), BackgroundColor3 = C.row, BorderSizePixel = 0, LayoutOrder = mo() }, mScroll)
-corner(nameRow, 8)
-txt(nameRow, "Macro name", { Size = UDim2.new(0.4, -10, 1, 0), Position = UDim2.fromOffset(10, 0) })
-local nameBox = box(nameRow, CFG.selected or "Macro1", { Size = UDim2.new(0.6, -14, 0, 24), Position = UDim2.new(0.4, 4, 0.5, -12) })
+loopSet = toggle(mScroll, "loop", flags.loop, { Size = UDim2.new(1, -6, 0, 46), LayoutOrder = mo() }, function(v)
+	flags.loop = v
+	saveCfg()
+end, "loop_d")
+
+local nameRow = new("Frame", { Size = UDim2.new(1, -6, 0, 36), BackgroundColor3 = C.row, BorderSizePixel = 0, LayoutOrder = mo() }, mScroll)
+corner(nameRow, 10)
+txtK(nameRow, "macro_name", { Size = UDim2.new(0.4, -10, 1, 0), Position = UDim2.fromOffset(14, 0) })
+local nameBox = box(nameRow, CFG.selected or "Macro1", { Size = UDim2.new(0.6, -18, 0, 26), Position = UDim2.new(0.4, 4, 0.5, -13), TextXAlignment = Enum.TextXAlignment.Center })
 
 local fileList
 local selFile = CFG.selected
@@ -835,10 +1235,12 @@ local function refreshFiles()
 		if ch:IsA("TextButton") then ch:Destroy() end
 	end
 	for _, n in ipairs(listMacros()) do
-		local b = btn(fileList, n, { Size = UDim2.new(1, -6, 0, 26), BackgroundColor3 = (n == selFile) and C.acc or C.row, TextColor3 = (n == selFile) and C.bg or C.text, TextXAlignment = Enum.TextXAlignment.Left })
-		new("UIPadding", { PaddingLeft = UDim.new(0, 8) }, b)
+		local on = (n == selFile)
+		local b = btn(fileList, n, { Size = UDim2.new(1, -6, 0, 28), BackgroundColor3 = on and C.acc or C.row, TextColor3 = on and C.bg or C.text, TextXAlignment = Enum.TextXAlignment.Left }, nil, true)
+		hoverable(b, false)
+		new("UIPadding", { PaddingLeft = UDim.new(0, 10) }, b)
 		b.MouseButton1Click:Connect(function()
-			if running or recording then status("หยุดอัด/เล่นก่อน") return end
+			if running or recording then status("stop_first") return end
 			selFile = n
 			nameBox.Text = n
 			loadMacro(n)
@@ -847,100 +1249,521 @@ local function refreshFiles()
 	end
 end
 
-local btnRow = hbar(mScroll, { Size = UDim2.new(1, -6, 0, 30), LayoutOrder = mo() })
-btn(btnRow, "Save", { Size = UDim2.new(0.34, -3, 1, 0), BackgroundColor3 = C.ok, TextColor3 = C.bg }, function()
-	if recording then status("ปิด Record ก่อนเซฟ") return end
+local btnRow = hbar(mScroll, { Size = UDim2.new(1, -6, 0, 32), LayoutOrder = mo() })
+btnK(btnRow, "save", { Size = UDim2.new(0.34, -4, 1, 0), BackgroundColor3 = C.ok, TextColor3 = C.bg }, function()
+	if recording then status("close_rec") return end
 	if saveMacro(nameBox.Text) then selFile = cleanName(nameBox.Text) refreshFiles() end
 end)
-btn(btnRow, "Refresh", { Size = UDim2.new(0.33, -3, 1, 0) }, function() refreshFiles() end)
-btn(btnRow, "Delete", { Size = UDim2.new(0.33, -3, 1, 0), BackgroundColor3 = C.bad }, function()
-	if not selFile then status("เลือกไฟล์ก่อน") return end
+btnK(btnRow, "refresh", { Size = UDim2.new(0.33, -4, 1, 0) }, function() refreshFiles() end)
+btnK(btnRow, "delete", { Size = UDim2.new(0.33, -4, 1, 0), BackgroundColor3 = C.bad }, function()
+	if not selFile then status("pick_file") return end
 	if delfile then pcall(delfile, filePath(selFile)) end
 	if CFG.selected == selFile then CFG.selected = nil saveCfg() end
-	status("ลบ " .. selFile .. " แล้ว")
+	status("deleted", selFile)
 	selFile = nil
 	refreshFiles()
 end)
 
-txt(mScroll, "Saved macros (กดเพื่อโหลด)", { Size = UDim2.new(1, -6, 0, 20), TextColor3 = C.sub, TextSize = 12, LayoutOrder = mo() })
+txtK(mScroll, "saved_macros", { Size = UDim2.new(1, -6, 0, 18), TextColor3 = C.sub, TextSize = 12, LayoutOrder = mo() })
 fileList = new("ScrollingFrame", {
-	Size = UDim2.new(1, -6, 0, 140), BackgroundColor3 = C.side, BorderSizePixel = 0, ScrollBarThickness = 3,
+	Size = UDim2.new(1, -6, 0, 130), BackgroundColor3 = C.side, BorderSizePixel = 0, ScrollBarThickness = 3,
 	AutomaticCanvasSize = Enum.AutomaticSize.Y, CanvasSize = UDim2.new(), LayoutOrder = mo(),
 }, mScroll)
-corner(fileList, 8)
+corner(fileList, 10)
 new("UIListLayout", { Padding = UDim.new(0, 3) }, fileList)
-new("UIPadding", { PaddingTop = UDim.new(0, 3), PaddingLeft = UDim.new(0, 3), PaddingRight = UDim.new(0, 3) }, fileList)
+new("UIPadding", { PaddingTop = UDim.new(0, 4), PaddingLeft = UDim.new(0, 4), PaddingRight = UDim.new(0, 4) }, fileList)
 
-------------------------------------------------------------------------
+--------------------------------------------------------------------------
+-- PAGE: Prices (เลือกยูนิต -> Select -> แก้ราคาตามขั้น)
+--------------------------------------------------------------------------
+local pPrices = newPage("tab_prices")
+local selUnit, pendingUnit = nil, nil
+
+local pBar = hbar(pPrices, { Size = UDim2.new(1, -12, 0, 36), Position = UDim2.fromOffset(6, 6) })
+toggle(pBar, "lock_all", CFG.priceLockAll, { Size = UDim2.new(0.5, -3, 1, 0) }, function(v)
+	CFG.priceLockAll = v
+	saveCfg()
+	UI.refresh()
+end)
+toggle(pBar, "auto_learn", CFG.autoLearn, { Size = UDim2.new(0.5, -3, 1, 0) }, function(v)
+	CFG.autoLearn = v
+	saveCfg()
+end)
+
+txtK(pPrices, "units_hdr", { Size = UDim2.new(1, -12, 0, 16), Position = UDim2.fromOffset(8, 48), TextColor3 = C.sub, TextSize = 11 })
+local chipBar = new("ScrollingFrame", {
+	Size = UDim2.new(1, -104, 0, 36), Position = UDim2.fromOffset(6, 66), BackgroundColor3 = C.side, BorderSizePixel = 0,
+	ScrollBarThickness = 0, ScrollingDirection = Enum.ScrollingDirection.X, AutomaticCanvasSize = Enum.AutomaticSize.X, CanvasSize = UDim2.new(),
+}, pPrices)
+corner(chipBar, 10)
+new("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal, Padding = UDim.new(0, 5), VerticalAlignment = Enum.VerticalAlignment.Center }, chipBar)
+new("UIPadding", { PaddingLeft = UDim.new(0, 6), PaddingRight = UDim.new(0, 6) }, chipBar)
+
+local selectBtn = btnK(pPrices, "select", { Size = UDim2.fromOffset(86, 36), Position = UDim2.new(1, -92, 0, 66), BackgroundColor3 = C.acc2, TextColor3 = C.bg })
+
+local unitTitle = txt(pPrices, "", { Size = UDim2.new(1, -12, 0, 20), Position = UDim2.fromOffset(8, 108), Font = Enum.Font.GothamBold, TextSize = 13 })
+local stageGroup = new("CanvasGroup", { Size = UDim2.new(1, -12, 1, -134), Position = UDim2.fromOffset(6, 130), BackgroundColor3 = C.side, BorderSizePixel = 0 }, pPrices)
+corner(stageGroup, 10)
+local stageList = new("ScrollingFrame", {
+	Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, BorderSizePixel = 0, ScrollBarThickness = 3,
+	AutomaticCanvasSize = Enum.AutomaticSize.Y, CanvasSize = UDim2.new(),
+}, stageGroup)
+new("UIListLayout", { Padding = UDim.new(0, 4), SortOrder = Enum.SortOrder.LayoutOrder }, stageList)
+new("UIPadding", { PaddingTop = UDim.new(0, 5), PaddingLeft = UDim.new(0, 5), PaddingRight = UDim.new(0, 5), PaddingBottom = UDim.new(0, 5) }, stageList)
+
+local function unitList()
+	local seen, out = {}, {}
+	for i, s in ipairs(steps) do
+		local m = meta[i]
+		if s.type == "add" and m and not seen[m.unit] then
+			seen[m.unit] = true
+			out[#out + 1] = m.unit
+		end
+	end
+	return out
+end
+
+local chipBtns = {}
+local function paintChips()
+	for name, b in pairs(chipBtns) do
+		local on = (name == pendingUnit)
+		setBtn(b, on and C.acc or C.row, on and C.bg or C.text)
+	end
+end
+
+local function rebuildStages(animate)
+	for _, ch in ipairs(stageList:GetChildren()) do
+		if ch:IsA("Frame") or ch:IsA("TextLabel") then ch:Destroy() end
+	end
+	if not selUnit then
+		unitTitle.Text = ""
+		txtK(stageList, "pick_first", { Size = UDim2.new(1, -6, 0, 30), TextColor3 = C.sub })
+		return
+	end
+	local maxStage, uses = 1, {}
+	for i, s in ipairs(steps) do
+		local m = meta[i]
+		if m and m.unit == selUnit and s.type ~= "sell" then
+			maxStage = math.max(maxStage, m.stage)
+			uses[m.stage] = (uses[m.stage] or 0) + 1
+		end
+	end
+	unitTitle.Text = T("unit_title", selUnit, math.floor(maxStage))
+	for st = 1, maxStage do
+		local p = pslot(selUnit, st, true)
+		local row = new("Frame", { Size = UDim2.new(1, -6, 0, 36), BackgroundColor3 = C.row, BorderSizePixel = 0, LayoutOrder = st }, stageList)
+		corner(row, 9)
+		txt(row, T(st == 1 and "stage_place" or "stage_up", st), { Size = UDim2.new(0, 190, 1, 0), Position = UDim2.fromOffset(12, 0), Font = Enum.Font.GothamBold })
+		txt(row, "x" .. (uses[st] or 0), { Size = UDim2.fromOffset(40, 36), Position = UDim2.fromOffset(200, 0), TextColor3 = C.sub, TextSize = 12 })
+		box(row, string.format("%.0f", p.price or 0), { Size = UDim2.fromOffset(120, 26), Position = UDim2.fromOffset(250, 5), TextXAlignment = Enum.TextXAlignment.Center }, function(t)
+			local n = parseNum(t)
+			if n then
+				p.price = n
+				p.locked = true -- แก้เองแล้วล็อคอัตโนมัติ ไม่ให้ระบบเรียนรู้ทับ
+			end
+			rebuildStages(false)
+		end)
+		local locked = p.locked or CFG.priceLockAll
+		local lk = btn(row, locked and T("lock_on") or T("lock_off"), { Size = UDim2.fromOffset(80, 26), Position = UDim2.fromOffset(382, 5), BackgroundColor3 = locked and C.acc or C.off, TextColor3 = locked and C.bg or C.text })
+		lk.MouseButton1Click:Connect(function()
+			p.locked = not p.locked
+			rebuildStages(false)
+		end)
+	end
+	if animate then
+		stageGroup.GroupTransparency = 1
+		tw(stageGroup, 0.3, { GroupTransparency = 0 }, QUINT)
+	end
+end
+
+local function rebuildChips()
+	for _, ch in ipairs(chipBar:GetChildren()) do
+		if ch:IsA("TextButton") or ch:IsA("TextLabel") then ch:Destroy() end
+	end
+	chipBtns = {}
+	local units = unitList()
+	if #units == 0 then
+		txtK(chipBar, "no_units", { Size = UDim2.fromOffset(160, 30), TextColor3 = C.sub })
+		selUnit, pendingUnit = nil, nil
+		return
+	end
+	local found = false
+	for _, u in ipairs(units) do if u == selUnit then found = true end end
+	if not found then selUnit = nil end
+	for _, u in ipairs(units) do
+		local b = btn(chipBar, u, { AutomaticSize = Enum.AutomaticSize.X, Size = UDim2.fromOffset(20, 26), BackgroundColor3 = C.row }, nil, true)
+		new("UIPadding", { PaddingLeft = UDim.new(0, 12), PaddingRight = UDim.new(0, 12) }, b)
+		b.MouseButton1Click:Connect(function()
+			pendingUnit = u
+			paintChips()
+		end)
+		chipBtns[u] = b
+	end
+	paintChips()
+end
+
+selectBtn.MouseButton1Click:Connect(function()
+	if not pendingUnit then status("need_unit") return end
+	selUnit = pendingUnit
+	rebuildStages(true)
+	status("unit_selected", selUnit)
+end)
+
+--------------------------------------------------------------------------
+-- PAGE: Steps (ดูลำดับ / เลื่อน / ลบ / ทดสอบทีละสเต็ป)
+--------------------------------------------------------------------------
+local pSteps = newPage("tab_steps")
+local stepsStatus
+local bar4 = hbar(pSteps, { Size = UDim2.new(1, -12, 0, 30), Position = UDim2.fromOffset(6, 6) })
+stepsStatus = txt(bar4, "", { Size = UDim2.new(0.6, -3, 1, 0), TextColor3 = C.sub, TextSize = 12 })
+btnK(bar4, "clear_all", { Size = UDim2.new(0.4, -3, 1, 0), BackgroundColor3 = C.bad }, function()
+	if running or recording then status("stop_first") return end
+	steps, prices, meta = {}, {}, {}
+	curIdx = 0
+	UI.refresh()
+end)
+
+local stepList = new("ScrollingFrame", {
+	Size = UDim2.new(1, -12, 1, -48), Position = UDim2.fromOffset(6, 42), BackgroundColor3 = C.side, BorderSizePixel = 0,
+	ScrollBarThickness = 3, AutomaticCanvasSize = Enum.AutomaticSize.Y, CanvasSize = UDim2.new(),
+}, pSteps)
+corner(stepList, 10)
+new("UIListLayout", { Padding = UDim.new(0, 3), SortOrder = Enum.SortOrder.LayoutOrder }, stepList)
+new("UIPadding", { PaddingTop = UDim.new(0, 4), PaddingLeft = UDim.new(0, 4), PaddingRight = UDim.new(0, 4), PaddingBottom = UDim.new(0, 4) }, stepList)
+
+local stepRows = {}
+local function refreshSteps()
+	for _, ch in ipairs(stepList:GetChildren()) do
+		if ch:IsA("Frame") then ch:Destroy() end
+	end
+	stepRows = {}
+	for i, s in ipairs(steps) do
+		local row = new("Frame", { Size = UDim2.new(1, -6, 0, 30), BackgroundColor3 = C.row, BorderSizePixel = 0, LayoutOrder = i }, stepList)
+		corner(row, 8)
+		stepRows[i] = row
+		txt(row, string.format("#%d  %s", i, describe(i)), { Size = UDim2.fromOffset(280, 30), Position = UDim2.fromOffset(10, 0), TextSize = 12 })
+		local pr = priceOf(i)
+		txt(row, (s.type ~= "sell" and pr > 0) and ("$ " .. fmt(pr)) or "-", { Size = UDim2.fromOffset(80, 30), Position = UDim2.fromOffset(292, 0), TextSize = 12, TextColor3 = C.sub, TextXAlignment = Enum.TextXAlignment.Center })
+		btn(row, "^", { Size = UDim2.fromOffset(26, 22), Position = UDim2.fromOffset(376, 4) }, function()
+			if running or recording then status("stop_first") return end
+			if i > 1 then steps[i], steps[i - 1] = steps[i - 1], steps[i] UI.refresh() end
+		end, true)
+		btn(row, "v", { Size = UDim2.fromOffset(26, 22), Position = UDim2.fromOffset(404, 4) }, function()
+			if running or recording then status("stop_first") return end
+			if i < #steps then steps[i], steps[i + 1] = steps[i + 1], steps[i] UI.refresh() end
+		end, true)
+		btn(row, "x", { Size = UDim2.fromOffset(26, 22), Position = UDim2.fromOffset(432, 4), BackgroundColor3 = C.bad }, function()
+			if running or recording then status("stop_first") return end
+			table.remove(steps, i)
+			UI.refresh()
+		end, true)
+		local doB = btn(row, "", { Size = UDim2.fromOffset(44, 22), Position = UDim2.fromOffset(462, 4), BackgroundColor3 = C.acc2, TextColor3 = C.bg }, function()
+			if running or recording then status("stop_first") return end
+			task.spawn(function()
+				local t0 = os.clock()
+				local ok = execStep(s, function() return os.clock() - t0 < 20 end, i)
+				status(ok and "step_ok" or "step_fail", i)
+			end)
+		end, true)
+		bind(doB, "Text", "do_step")
+	end
+	stepsStatus.Text = T("steps_count", #steps)
+end
+
+local refreshPending = false
+local function refreshAll()
+	recompute()
+	pcall(refreshSteps)
+	pcall(rebuildChips)
+	pcall(rebuildStages, false)
+end
+UI.refresh = function()
+	if refreshPending then return end
+	refreshPending = true
+	task.defer(function()
+		refreshPending = false
+		refreshAll()
+	end)
+end
+
+--------------------------------------------------------------------------
 -- PAGE: Settings
-------------------------------------------------------------------------
-local pSet = newPage("Settings", 4)
+--------------------------------------------------------------------------
+local pSet = newPage("tab_settings")
 local sScroll = scrollList(pSet)
 local so = counter()
 
-numRow(sScroll, so, "Retry ต่อสเต็ป (ครั้ง)", "retry")
-numRow(sScroll, so, "เวลาเช็คผล วาง/อัพ (วินาที)", "verifyTimeout")
-numRow(sScroll, so, "รอเงินสูงสุด (วิ, 0 = ไม่จำกัด)", "moneyTimeout")
-toggle(sScroll, "อ่านเงินไม่ได้ → ใช้ delay ที่อัดไว้", CFG.useDelay, { Size = UDim2.new(1, -6, 0, 34), LayoutOrder = so() }, function(v)
+-- ภาษา
+local langRow = new("Frame", { Size = UDim2.new(1, -6, 0, 44), BackgroundColor3 = C.row, BorderSizePixel = 0, LayoutOrder = so() }, sScroll)
+corner(langRow, 10)
+txtK(langRow, "language", { Size = UDim2.new(0.4, 0, 1, 0), Position = UDim2.fromOffset(14, 0), Font = Enum.Font.GothamBold })
+local langBtns = {}
+local function paintLang()
+	for code, b in pairs(langBtns) do
+		local on = (CFG.lang == code)
+		setBtn(b, on and C.acc or C.sel, on and C.bg or C.text)
+	end
+end
+local function setLang(code)
+	if CFG.lang == code then return end
+	CFG.lang = code
+	saveCfg()
+	paintLang()
+	relang()
+	UI.refresh()
+end
+langBtns.en = btn(langRow, "English", { Size = UDim2.fromOffset(86, 28), Position = UDim2.new(1, -184, 0.5, -14) }, function() setLang("en") end)
+langBtns.th = btn(langRow, "ไทย", { Size = UDim2.fromOffset(86, 28), Position = UDim2.new(1, -94, 0.5, -14) }, function() setLang("th") end)
+paintLang()
+
+numRow(sScroll, so, "retry", "retry")
+numRow(sScroll, so, "verify", "verifyTimeout")
+numRow(sScroll, so, "money_timeout", "moneyTimeout")
+toggle(sScroll, "use_delay", CFG.useDelay, { Size = UDim2.new(1, -6, 0, 38), LayoutOrder = so() }, function(v)
 	CFG.useDelay = v
 	saveCfg()
 end)
-txt(sScroll, "เงินอ่านจาก leaderstats.Money อัตโนมัติ", { Size = UDim2.new(1, -6, 0, 20), TextColor3 = C.sub, TextSize = 11, LayoutOrder = so() })
-txt(sScroll, "ปุ่มเปิด/ปิดเมนู: RightControl  |  ลากแถบบนเพื่อย้าย", { Size = UDim2.new(1, -6, 0, 20), TextColor3 = C.sub, TextSize = 11, LayoutOrder = so() })
+txtK(sScroll, "info_money", { Size = UDim2.new(1, -6, 0, 18), TextColor3 = C.sub, TextSize = 11, LayoutOrder = so() })
+txtK(sScroll, "info_keys", { Size = UDim2.new(1, -6, 0, 18), TextColor3 = C.sub, TextSize = 11, LayoutOrder = so() })
 
-local heartbeatConn
-btn(sScroll, "Destroy Jet Hub _ Camera", { Size = UDim2.new(1, -6, 0, 32), BackgroundColor3 = C.bad, LayoutOrder = so() }, function()
+local conns = {}
+btnK(sScroll, "destroy", { Size = UDim2.new(1, -6, 0, 34), BackgroundColor3 = C.bad, LayoutOrder = so() }, function()
 	stopMacro()
 	recording = false
-	flags.vote, flags.speed, flags.skip, flags.again = false, false, false, false
-	if heartbeatConn then heartbeatConn:Disconnect() end
+	for _, c in ipairs(conns) do pcall(function() c:Disconnect() end) end
 	gui:Destroy()
 end)
 
-------------------------------------------------------------------------
--- Dragging / toggle button / loops
-------------------------------------------------------------------------
+--------------------------------------------------------------------------
+-- โปรไฟล์ผู้เล่นมุมซ้ายล่าง (ท่ากอดอก)
+--------------------------------------------------------------------------
+-- ปรับท่าได้ที่นี่ (หน่วยองศา): up = ยกต้นแขนไปข้างหน้า, yaw = หุบต้นแขนเข้า,
+-- elbow = งอศอก, twist = บิดให้ปลายแขนพาดไปอีกฝั่ง
+local POSE = {
+	Right = { up = 40, yaw = 10, elbow = 75, twist = 78 },
+	Left  = { up = 25, yaw = 10, elbow = 65, twist = 78 },
+}
+
+local profile = new("Frame", { Size = UDim2.new(1, -14, 0, 176), Position = UDim2.new(0, 7, 1, -183), BackgroundColor3 = C.row, BorderSizePixel = 0 }, side)
+corner(profile, 12)
+new("UIStroke", { Color = C.acc, Thickness = 1, Transparency = 0.65 }, profile)
+
+local avatarImg = new("ImageLabel", { Size = UDim2.new(1, -14, 0, 104), Position = UDim2.fromOffset(7, 7), BackgroundColor3 = C.bg, BorderSizePixel = 0, ScaleType = Enum.ScaleType.Crop }, profile)
+corner(avatarImg, 9)
+local vp = new("ViewportFrame", {
+	Size = UDim2.new(1, -14, 0, 104), Position = UDim2.fromOffset(7, 7), BackgroundColor3 = C.bg, BorderSizePixel = 0,
+	Ambient = Color3.fromRGB(175, 180, 200), LightColor = Color3.new(1, 1, 1), LightDirection = Vector3.new(-0.6, -0.8, 0.5), Visible = false,
+}, profile)
+corner(vp, 9)
+txt(profile, LP.DisplayName, { Size = UDim2.new(1, -14, 0, 18), Position = UDim2.fromOffset(9, 114), Font = Enum.Font.GothamBold, TextSize = 13 })
+txt(profile, "@" .. LP.Name, { Size = UDim2.new(1, -14, 0, 14), Position = UDim2.fromOffset(9, 132), TextSize = 11, TextColor3 = C.sub })
+local profMoney = txt(profile, "$ --", { Size = UDim2.new(1, -14, 0, 16), Position = UDim2.fromOffset(9, 150), TextSize = 12, Font = Enum.Font.GothamBold, TextColor3 = C.ok })
+
+task.spawn(function()
+	local ok, url = pcall(function()
+		return Players:GetUserThumbnailAsync(LP.UserId, Enum.ThumbnailType.AvatarBust, Enum.ThumbnailSize.Size150x150)
+	end)
+	if ok and url then avatarImg.Image = url end
+end)
+
+local vpModel, vpT = nil, 0
+local function armPose(clone, side, p)
+	local sgn = (side == "Right") and 1 or -1
+	local up = clone:FindFirstChild(side .. "UpperArm")
+	local lo = clone:FindFirstChild(side .. "LowerArm")
+	local hd = clone:FindFirstChild(side .. "Hand")
+	if not (up and lo and hd) then return false end
+	local sh = up:FindFirstChild(side .. "Shoulder")
+	local el = lo:FindFirstChild(side .. "Elbow")
+	local wr = hd:FindFirstChild(side .. "Wrist")
+	if not (sh and el and wr) then return false end
+	local function place(m, tr) m.Part1.CFrame = m.Part0.CFrame * m.C0 * tr * m.C1:Inverse() end
+	place(sh, CFrame.Angles(0, math.rad(p.yaw) * sgn, 0) * CFrame.Angles(math.rad(p.up), 0, 0))
+	place(el, CFrame.Angles(0, math.rad(p.twist) * sgn, 0) * CFrame.Angles(math.rad(p.elbow), 0, 0))
+	place(wr, CFrame.new())
+	return true
+end
+
+local function buildProfileModel()
+	if vpModel then vpModel:Destroy() vpModel = nil end
+	local char = LP.Character or LP.CharacterAdded:Wait()
+	local hum = char:WaitForChild("Humanoid", 10)
+	local hrp = char:WaitForChild("HumanoidRootPart", 10)
+	if not (hum and hrp) or hum.RigType ~= Enum.HumanoidRigType.R15 then return end
+	task.wait(1.5) -- รอให้ชุด/ผมโหลด
+	char.Archivable = true
+	local clone = char:Clone()
+	if not clone then return end
+	for _, d in ipairs(clone:GetDescendants()) do
+		if d:IsA("LuaSourceContainer") or d:IsA("Sound") then d:Destroy() end
+	end
+	for _, d in ipairs(clone:GetDescendants()) do
+		if d:IsA("BasePart") then d.Anchored = true end
+	end
+	local chum = clone:FindFirstChildOfClass("Humanoid")
+	if chum then chum.DisplayDistanceType = Enum.HumanoidDisplayDistanceType.None end
+	local chrp = clone:FindFirstChild("HumanoidRootPart")
+	if not chrp then return end
+	clone.PrimaryPart = chrp
+	clone:PivotTo(CFrame.new(0, 0, 0))
+	local okR = armPose(clone, "Right", POSE.Right)
+	local okL = armPose(clone, "Left", POSE.Left)
+	if not (okR and okL) then return end
+	clone.Parent = vp
+	local cam = new("Camera", { FieldOfView = 30, CFrame = CFrame.lookAt(Vector3.new(0, 1.3, -7.6), Vector3.new(0, 1.05, 0)) }, vp)
+	vp.CurrentCamera = cam
+	vpModel = clone
+	vp.Visible = true
+	avatarImg.Visible = false
+end
+
+task.spawn(function() pcall(buildProfileModel) end)
+table.insert(conns, LP.CharacterAdded:Connect(function()
+	vp.Visible = false
+	avatarImg.Visible = true
+	task.wait(2)
+	pcall(buildProfileModel)
+end))
+
+--------------------------------------------------------------------------
+-- Drag / เปิด-ปิดเมนูแบบมีอนิเมชั่น
+--------------------------------------------------------------------------
 do
 	local dragging, startPos, startMouse
-	title.InputBegan:Connect(function(i)
+	table.insert(conns, title.InputBegan:Connect(function(i)
 		if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
 			dragging, startPos, startMouse = true, win.Position, i.Position
 		end
-	end)
-	UIS.InputChanged:Connect(function(i)
+	end))
+	table.insert(conns, UIS.InputChanged:Connect(function(i)
 		if dragging and (i.UserInputType == Enum.UserInputType.MouseMovement or i.UserInputType == Enum.UserInputType.Touch) then
 			local d = i.Position - startMouse
 			win.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + d.X, startPos.Y.Scale, startPos.Y.Offset + d.Y)
 		end
-	end)
-	UIS.InputEnded:Connect(function(i)
+	end))
+	table.insert(conns, UIS.InputEnded:Connect(function(i)
 		if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then dragging = false end
-	end)
+	end))
+end
+
+local isOpen, busy = true, false
+local function setOpen(v)
+	if busy or v == isOpen then return end
+	busy = true
+	isOpen = v
+	if v then
+		win.Visible = true
+		winScale.Scale = 0.9
+		tw(winScale, 0.28, { Scale = 1 }, BACK)
+		task.delay(0.3, function() busy = false end)
+	else
+		tw(winScale, 0.16, { Scale = 0.9 })
+		task.delay(0.17, function() win.Visible = false busy = false end)
+	end
 end
 
 local fab = new("TextButton", {
 	Size = UDim2.fromOffset(46, 46), Position = UDim2.new(0, 8, 0.5, -23), BackgroundColor3 = C.side, Text = "J",
-	TextColor3 = C.acc, Font = Enum.Font.GothamBlack, TextSize = 22, BorderSizePixel = 0,
+	TextColor3 = C.acc, Font = Enum.Font.GothamBlack, TextSize = 22, BorderSizePixel = 0, AutoButtonColor = false,
 }, gui)
 corner(fab, 23)
 new("UIStroke", { Thickness = 1.5, Color = C.acc }, fab)
-fab.MouseButton1Click:Connect(function() win.Visible = not win.Visible end)
-UIS.InputBegan:Connect(function(i, gp)
-	if not gp and i.KeyCode == Enum.KeyCode.RightControl then win.Visible = not win.Visible end
-end)
+hoverable(fab, true)
+fab.MouseButton1Click:Connect(function() setOpen(not isOpen) end)
+table.insert(conns, UIS.InputBegan:Connect(function(i, gp)
+	if not gp and i.KeyCode == Enum.KeyCode.RightControl then setOpen(not isOpen) end
+end))
 
-local rot, acc = 0, 0
-heartbeatConn = RunService.Heartbeat:Connect(function(dt)
+--------------------------------------------------------------------------
+-- การ์ดสถานะมาโคร (อัปเดตสด)
+--------------------------------------------------------------------------
+local cardState = ""
+local function updateCard()
+	local n = #steps
+	local stText, stCol = T("st_idle"), C.sub
+	local l1, l2, l3, frac = "", "", "", 0
+	if recording then
+		stText, stCol = T("st_rec"), C.bad
+		l1 = T("rec_progress", n)
+		if n > 0 then l2 = string.format("#%d  %s", n, describe(n)) end
+	else
+		if running then
+			if phase == "match" then stText, stCol = T("st_wait_match"), C.warn
+			elseif phase == "money" then stText, stCol = T("st_wait_money"), C.warn
+			elseif phase == "loop" then stText, stCol = T("st_loop"), C.acc
+			else stText, stCol = T("st_acting"), C.ok end
+		end
+		if n == 0 then
+			l1 = T("no_steps")
+		elseif running and phase == "loop" then
+			l1 = T("loop_wait")
+			frac = 1
+		elseif curIdx > n then
+			l1 = T("finished")
+			frac = 1
+		else
+			local i = math.max(curIdx, 1)
+			l1 = T("next_line", i, n, describe(i))
+			local price = priceOf(i)
+			if price > 0 then
+				local m = getMoney()
+				if m then
+					if m >= price then l2 = T("money_ok", fmt(m), fmt(price))
+					else l2 = T("money_short", fmt(price), fmt(m), fmt(price - m)) end
+				else
+					l2 = T("money_na")
+				end
+			else
+				l2 = T("money_free")
+			end
+			if i < n then l3 = T("then_line", describe(i + 1)) end
+			frac = (i - 1) / n
+		end
+	end
+	cStateLbl.Text = stText
+	cStateLbl.TextColor3 = stCol
+	tw(dot, 0.2, { BackgroundColor3 = stCol })
+	cCountLbl.Text = (n > 0 and not recording) and (math.min(math.max(curIdx, 1), n) .. " / " .. n) or ""
+	cL1.Text, cL2.Text, cL3.Text = l1, l2, l3
+	tw(barFill, 0.3, { Size = UDim2.new(math.clamp(frac, 0, 1), 0, 1, 0) })
+	if cardState ~= stText then
+		cardState = stText
+		cardStroke.Transparency = 0.1
+		tw(cardStroke, 0.6, { Transparency = 0.6 })
+	end
+	-- ไฮไลท์สเต็ปที่กำลังทำในแท็บ Steps
+	for i, r in pairs(stepRows) do
+		if r.Parent then
+			local on = running and i == curIdx
+			local target = on and C.sel or C.row
+			if r.BackgroundColor3 ~= target then tw(r, 0.2, { BackgroundColor3 = target }) end
+		end
+	end
+end
+
+--------------------------------------------------------------------------
+-- ลูปหลัก
+--------------------------------------------------------------------------
+local rot, acc, breathe = 0, 0, 0
+table.insert(conns, RunService.Heartbeat:Connect(function(dt)
 	rot = (rot + dt * 60) % 360
 	grad.Rotation = rot
+	logoGrad.Rotation = rot
 	acc = acc + dt
-	if acc >= 0.35 then
+	if acc >= 0.25 then
 		acc = 0
-		moneyLbl.Text = "$ " .. fmt(getMoney())
+		local m = fmt(getMoney())
+		moneyLbl.Text = "$ " .. m
+		profMoney.Text = "$ " .. m
+		pcall(updateCard)
 	end
-end)
+	if vpModel and win.Visible then
+		breathe = breathe + dt
+		vpModel:PivotTo(CFrame.new(0, math.sin(breathe * 1.6) * 0.04, 0) * CFrame.Angles(0, math.rad(-22 + math.sin(breathe * 0.9) * 9), 0))
+	end
+end))
 
--- ลูปฟีเจอร์ Game
+-- ฟีเจอร์ Game วนตามเวลา
 local last = {}
 local function due(k, iv)
 	local n = os.clock()
@@ -961,13 +1784,33 @@ task.spawn(function()
 	end
 end)
 
--- เริ่มต้น
-tabs[1].btn.BackgroundTransparency = 0
-tabs[1].btn.TextColor3 = C.text
-tabs[1].page.Visible = true
+--------------------------------------------------------------------------
+-- เริ่มต้น + คืนค่าที่จำไว้
+--------------------------------------------------------------------------
+CFG.tab = math.clamp(tonumber(CFG.tab) or 1, 1, #tabs)
+showTab(CFG.tab, false)
 
 ensureDir()
 refreshFiles()
 if CFG.selected then loadMacro(CFG.selected) end
-UI.refresh()
-status(hookOK and "Jet Hub _ Camera พร้อมใช้งาน" or "พร้อม (executor ไม่รองรับ hookmetamethod → อัดไม่ได้ แต่เล่น/แก้ไฟล์ได้)")
+refreshAll()
+status(hookOK and "ready" or "ready_nohook")
+
+-- เปิด Play อัตโนมัติถ้าครั้งที่แล้วเปิดค้างไว้
+if flags.play then
+	task.defer(function()
+		task.wait(1)
+		if #steps > 0 and not running and not recording then
+			playSet(true, true)
+			if not runMacro(1) then playSet(false, true) flags.play = false saveCfg() end
+		else
+			playSet(false, true)
+			flags.play = false
+			saveCfg()
+		end
+	end)
+end
+
+-- เปิดเมนูด้วยอนิเมชั่น
+winScale.Scale = 0.9
+tw(winScale, 0.35, { Scale = 1 }, BACK)
