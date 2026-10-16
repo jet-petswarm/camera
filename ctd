@@ -176,6 +176,9 @@ local LANG = {
 		import_empty = "Nothing to import: paste a code or copy one first",
 		step_ok = "Step %d done",
 		step_fail = "Step %d failed",
+		hint_keys = "RightCtrl: show/hide  •  drag the top bar",
+		g_vote = "Vote", g_speed = "Game speed", g_skip = "Skip wave", g_again = "Play again", g_files = "Macro library",
+		g_interface = "Interface", g_general = "General", theme = "Theme", ui_scale = "UI size",
 		step_deleted = "Deleted step #%d and saved to macro: %s",
 		step_moved = "Moved step and saved to macro: %s",
 		cleared_saved = "Cleared all steps and saved to macro: %s",
@@ -280,6 +283,9 @@ local LANG = {
 		import_empty = "ไม่มีอะไรให้นำเข้า: วางโค้ดหรือคัดลอกมาก่อน",
 		step_ok = "สเต็ป %d สำเร็จ",
 		step_fail = "สเต็ป %d ไม่สำเร็จ",
+		hint_keys = "RightCtrl: เปิด/ปิด  •  ลากแถบด้านบนเพื่อย้าย",
+		g_vote = "โหวต", g_speed = "ความเร็วเกม", g_skip = "ข้ามเวฟ", g_again = "เล่นอีกรอบ", g_files = "คลังมาโคร",
+		g_interface = "หน้าตา", g_general = "ทั่วไป", theme = "ธีมสี", ui_scale = "ขนาด UI",
 		step_deleted = "ลบสเต็ป #%d และบันทึกลงมาโครแล้ว: %s",
 		step_moved = "ย้ายสเต็ปและบันทึกลงมาโครแล้ว: %s",
 		cleared_saved = "ล้างสเต็ปทั้งหมดและบันทึกลงมาโครแล้ว: %s",
@@ -305,6 +311,7 @@ local statusLbl
 local function status(k, ...)
 	lastStatus = { k, ... }
 	if statusLbl then statusLbl.Text = T(k, ...) end
+	if JH.onStatus then pcall(JH.onStatus, k, T(k, ...)) end
 end
 local function relang()
 	for i = #BIND, 1, -1 do
@@ -1102,36 +1109,76 @@ if hookmetamethod and newcclosure and getnamecallmethod then
 end
 
 --------------------------------------------------------------------------
--- UI helpers + อนิเมชั่น
+-- UI v4 : ดีไซน์ใหม่ทั้งหมด (ธีมสลับได้ / toast แจ้งเตือน / การ์ดสถานะเรืองแสง / ยุบหน้าต่างได้)
 --------------------------------------------------------------------------
-local C = {
-	bg = Color3.fromRGB(8, 10, 24), side = Color3.fromRGB(13, 17, 38), row = Color3.fromRGB(20, 26, 56),
-	sel = Color3.fromRGB(34, 46, 104), text = Color3.fromRGB(235, 240, 255), sub = Color3.fromRGB(125, 140, 190),
-	acc = Color3.fromRGB(0, 200, 255), acc2 = Color3.fromRGB(255, 140, 40), ok = Color3.fromRGB(70, 225, 130),
-	warn = Color3.fromRGB(255, 205, 70), bad = Color3.fromRGB(255, 85, 105), off = Color3.fromRGB(52, 60, 112),
+local THEMES = {
+	aurora = { acc = Color3.fromRGB(0, 214, 255), acc2 = Color3.fromRGB(150, 110, 255) },
+	sunset = { acc = Color3.fromRGB(255, 128, 64), acc2 = Color3.fromRGB(255, 62, 150) },
+	matrix = { acc = Color3.fromRGB(64, 255, 156), acc2 = Color3.fromRGB(0, 196, 255) },
+	royal = { acc = Color3.fromRGB(138, 124, 255), acc2 = Color3.fromRGB(255, 104, 224) },
 }
+local THEME_ORDER = { "aurora", "sunset", "matrix", "royal" }
+if not THEMES[CFG.theme] then CFG.theme = "aurora" end
+
+local C = {
+	bg = Color3.fromRGB(9, 10, 20), panel = Color3.fromRGB(14, 16, 30), card = Color3.fromRGB(21, 24, 44),
+	card2 = Color3.fromRGB(29, 33, 58), line = Color3.fromRGB(52, 58, 98), text = Color3.fromRGB(239, 242, 255),
+	sub = Color3.fromRGB(143, 151, 190), dim = Color3.fromRGB(96, 104, 144), ink = Color3.fromRGB(8, 10, 20),
+	ok = Color3.fromRGB(74, 222, 128), warn = Color3.fromRGB(250, 204, 21), bad = Color3.fromRGB(248, 87, 110),
+	sel = Color3.fromRGB(40, 46, 90),
+	acc = THEMES[CFG.theme].acc, acc2 = THEMES[CFG.theme].acc2,
+}
+C.row, C.side = C.card, C.panel
+
 local QUAD, QUINT, BACK = Enum.EasingStyle.Quad, Enum.EasingStyle.Quint, Enum.EasingStyle.Back
 local OUT = Enum.EasingDirection.Out
+local FONT, FONTB, FONTK = Enum.Font.GothamMedium, Enum.Font.GothamBold, Enum.Font.GothamBlack
+local LEFT, CENTER, RIGHT = Enum.TextXAlignment.Left, Enum.TextXAlignment.Center, Enum.TextXAlignment.Right
+local BORDER = Enum.ApplyStrokeMode.Border
+
+-- ทะเบียนสีธีม: ทุกชิ้นที่ใช้สีธีมลงทะเบียนไว้ เปลี่ยนธีมแล้ววาดใหม่ทันที
+local PAINT = {}
+local function paint(fn)
+	PAINT[#PAINT + 1] = fn
+	fn()
+end
+local function repaint()
+	for i = #PAINT, 1, -1 do pcall(PAINT[i]) end
+end
 
 local function tw(o, t, props, style, dir)
 	local tween = TweenService:Create(o, TweenInfo.new(t, style or QUAD, dir or OUT), props)
 	tween:Play()
 	return tween
 end
-
 local function new(cls, props, parent)
 	local o = Instance.new(cls)
 	for k, v in pairs(props or {}) do o[k] = v end
 	if parent then o.Parent = parent end
 	return o
 end
-local function corner(o, r) new("UICorner", { CornerRadius = UDim.new(0, r or 8) }, o) end
+local function corner(o, r) return new("UICorner", { CornerRadius = UDim.new(0, r or 8) }, o) end
 local function apply(o, props) for k, v in pairs(props or {}) do o[k] = v end return o end
+local function stroke(o, col, th, tr)
+	return new("UIStroke", { Color = col or C.line, Thickness = th or 1, Transparency = tr or 0.5, ApplyStrokeMode = BORDER }, o)
+end
+local function accGrad(parent, rot)
+	local g = new("UIGradient", { Rotation = rot or 0 }, parent)
+	paint(function() g.Color = ColorSequence.new(C.acc, C.acc2) end)
+	return g
+end
+local function pad(o, t, r, b, l)
+	return new("UIPadding", { PaddingTop = UDim.new(0, t or 0), PaddingRight = UDim.new(0, r or 0), PaddingBottom = UDim.new(0, b or 0), PaddingLeft = UDim.new(0, l or 0) }, o)
+end
+local function counter()
+	local n = 0
+	return function() n = n + 1 return n end
+end
 
 local function txt(parent, t, props)
 	local l = new("TextLabel", {
-		BackgroundTransparency = 1, Text = t, TextColor3 = C.text, Font = Enum.Font.GothamMedium,
-		TextSize = 13, TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd,
+		BackgroundTransparency = 1, Text = t, TextColor3 = C.text, Font = FONT, TextSize = 13,
+		TextXAlignment = LEFT, TextTruncate = Enum.TextTruncate.AtEnd,
 	}, parent)
 	return apply(l, props)
 end
@@ -1141,96 +1188,122 @@ local function txtK(parent, key, props, ...)
 	return l
 end
 
-local function hoverable(b, useScale)
-	b:SetAttribute("base", b.BackgroundColor3)
-	local sc = useScale and new("UIScale", { Scale = 1 }, b) or nil
-	b.MouseEnter:Connect(function()
-		tw(b, 0.12, { BackgroundColor3 = b:GetAttribute("base"):Lerp(Color3.new(1, 1, 1), 0.14) })
-	end)
+-- เอฟเฟกต์ปุ่ม: สว่างเมื่อชี้ + ยุบเมื่อกด
+local function fx(b, down)
+	local sc = new("UIScale", { Scale = 1 }, b)
+	local shine = new("Frame", { Size = UDim2.fromScale(1, 1), BackgroundColor3 = Color3.new(1, 1, 1), BackgroundTransparency = 1, BorderSizePixel = 0 }, b)
+	local cr = b:FindFirstChildOfClass("UICorner")
+	if cr then new("UICorner", { CornerRadius = cr.CornerRadius }, shine) end
+	b.MouseEnter:Connect(function() tw(shine, 0.12, { BackgroundTransparency = 0.9 }) end)
 	b.MouseLeave:Connect(function()
-		tw(b, 0.15, { BackgroundColor3 = b:GetAttribute("base") })
-		if sc then tw(sc, 0.1, { Scale = 1 }) end
+		tw(shine, 0.16, { BackgroundTransparency = 1 })
+		tw(sc, 0.1, { Scale = 1 })
 	end)
-	if sc then
-		b.MouseButton1Down:Connect(function() tw(sc, 0.08, { Scale = 0.96 }) end)
-		b.MouseButton1Up:Connect(function() tw(sc, 0.14, { Scale = 1 }, BACK) end)
-	end
-end
-local function setBtn(b, bg, fg)
-	b:SetAttribute("base", bg)
-	tw(b, 0.2, { BackgroundColor3 = bg, TextColor3 = fg or b.TextColor3 })
+	b.MouseButton1Down:Connect(function() tw(sc, 0.08, { Scale = down or 0.96 }) end)
+	b.MouseButton1Up:Connect(function() tw(sc, 0.16, { Scale = 1 }, BACK) end)
 end
 
-local function btn(parent, t, props, cb, small)
+-- ปุ่ม: role = acc (ไล่สีธีม) / ok / bad / warn / ghost
+local function btn(parent, t, role, props, cb)
 	local b = new("TextButton", {
-		Text = t, BackgroundColor3 = C.sel, TextColor3 = C.text, Font = Enum.Font.GothamBold,
+		Text = t, BackgroundColor3 = Color3.new(1, 1, 1), TextColor3 = C.ink, Font = FONTB,
 		TextSize = 12, AutoButtonColor = false, BorderSizePixel = 0,
 	}, parent)
-	corner(b, 7)
+	corner(b, 9)
 	apply(b, props)
-	hoverable(b, not small)
+	if role == "acc" then
+		accGrad(b, 0)
+	elseif role == "ghost" then
+		b.BackgroundColor3 = C.card2
+		b.TextColor3 = C.text
+		stroke(b, C.line, 1, 0.4)
+	elseif role == "bad" then
+		paint(function() b.BackgroundColor3 = C.bad end)
+		b.TextColor3 = Color3.new(1, 1, 1)
+	else
+		paint(function() b.BackgroundColor3 = C[role] or C.ok end)
+	end
+	fx(b)
 	if cb then b.MouseButton1Click:Connect(cb) end
 	return b
 end
-local function btnK(parent, key, props, cb, small, ...)
-	local b = btn(parent, "", props, cb, small)
-	bind(b, "Text", key, ...)
+local function btnK(parent, key, role, props, cb)
+	local b = btn(parent, "", role, props, cb)
+	bind(b, "Text", key)
 	return b
 end
 
 local function box(parent, text, props, onDone)
 	local b = new("TextBox", {
-		Text = text or "", BackgroundColor3 = C.bg, TextColor3 = C.text, PlaceholderColor3 = C.sub,
-		Font = Enum.Font.Gotham, TextSize = 12, ClearTextOnFocus = false, BorderSizePixel = 0,
+		Text = text or "", BackgroundColor3 = C.panel, TextColor3 = C.text, PlaceholderColor3 = C.dim,
+		Font = FONT, TextSize = 12, ClearTextOnFocus = false, BorderSizePixel = 0,
 	}, parent)
-	corner(b, 7)
-	local st = new("UIStroke", { Color = C.acc, Thickness = 1, Transparency = 1 }, b)
-	b.Focused:Connect(function() tw(st, 0.15, { Transparency = 0.2 }) end)
+	corner(b, 9)
+	local st = stroke(b, C.line, 1, 0.3)
+	b.Focused:Connect(function() tw(st, 0.15, { Color = C.acc, Transparency = 0 }) end)
 	b.FocusLost:Connect(function()
-		tw(st, 0.2, { Transparency = 1 })
+		tw(st, 0.2, { Color = C.line, Transparency = 0.3 })
 		if onDone then onDone(b.Text, b) end
 	end)
 	return apply(b, props)
 end
 
--- สวิตช์แบบใหม่: แถบสีด้านซ้าย + สวิตช์ยืด/เด้ง + glow
-local function toggle(parent, labelKey, init, props, cb, descKey)
-	local row = new("Frame", { BackgroundColor3 = C.row, BorderSizePixel = 0 }, parent)
-	corner(row, 10)
+local function rowFrame(parent, order, h, props)
+	local r = new("Frame", { Size = UDim2.new(1, 0, 0, h or 40), BackgroundColor3 = C.card2, BorderSizePixel = 0, LayoutOrder = order }, parent)
+	corner(r, 11)
+	return apply(r, props)
+end
+
+local function hrow(parent, order, h, gap)
+	local f = new("Frame", { Size = UDim2.new(1, 0, 0, h), BackgroundTransparency = 1, LayoutOrder = order }, parent)
+	new("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal, Padding = UDim.new(0, gap or 6), SortOrder = Enum.SortOrder.LayoutOrder }, f)
+	return f
+end
+
+-- สวิตช์ (แถวการ์ด + ไอคอน + คำอธิบาย) คืน set(v, silent), row
+local function switch(parent, labelKey, init, props, cb, descKey, icon)
+	local row = new("Frame", { BackgroundColor3 = C.card2, BorderSizePixel = 0 }, parent)
+	corner(row, 11)
 	apply(row, props)
-	local accent = new("Frame", { Size = UDim2.new(0, 3, 0.5, 0), Position = UDim2.new(0, 0, 0.25, 0), BackgroundColor3 = C.acc, BackgroundTransparency = 1, BorderSizePixel = 0 }, row)
-	corner(accent, 2)
+	local rs = stroke(row, C.acc, 1.2, 1)
+	paint(function() rs.Color = C.acc end)
+	local x0 = 14
+	if icon then
+		local ib = new("Frame", { Size = UDim2.fromOffset(30, 30), Position = UDim2.new(0, 9, 0.5, -15), BackgroundColor3 = C.panel, BorderSizePixel = 0 }, row)
+		corner(ib, 9)
+		new("TextLabel", { Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, Text = icon, TextSize = 15, Font = FONTB, TextColor3 = C.text }, ib)
+		x0 = 49
+	end
 	if descKey then
-		txtK(row, labelKey, { Size = UDim2.new(1, -86, 0, 20), Position = UDim2.fromOffset(14, 5), Font = Enum.Font.GothamBold })
-		txtK(row, descKey, { Size = UDim2.new(1, -86, 0, 16), Position = UDim2.fromOffset(14, 25), TextSize = 11, TextColor3 = C.sub })
+		txtK(row, labelKey, { Size = UDim2.new(1, -(x0 + 68), 0, 18), Position = UDim2.new(0, x0, 0.5, -17), Font = FONTB })
+		txtK(row, descKey, { Size = UDim2.new(1, -(x0 + 68), 0, 15), Position = UDim2.new(0, x0, 0.5, 2), TextSize = 11, TextColor3 = C.sub })
 	else
-		txtK(row, labelKey, { Size = UDim2.new(1, -86, 1, 0), Position = UDim2.fromOffset(14, 0), Font = Enum.Font.GothamBold })
+		txtK(row, labelKey, { Size = UDim2.new(1, -(x0 + 68), 1, 0), Position = UDim2.fromOffset(x0, 0), Font = FONTB })
 	end
 	local track = new("TextButton", {
-		Text = "", Size = UDim2.fromOffset(48, 24), AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -12, 0.5, 0),
-		BackgroundColor3 = C.off, BorderSizePixel = 0, AutoButtonColor = false,
+		Text = "", Size = UDim2.fromOffset(44, 24), AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -12, 0.5, 0),
+		BackgroundColor3 = C.line, BorderSizePixel = 0, AutoButtonColor = false,
 	}, row)
 	corner(track, 12)
-	local glow = new("UIStroke", { Color = C.acc, Thickness = 2, Transparency = 1 }, track)
+	local fill = new("Frame", { Size = UDim2.fromScale(1, 1), BackgroundColor3 = Color3.new(1, 1, 1), BackgroundTransparency = 1, BorderSizePixel = 0 }, track)
+	corner(fill, 12)
+	accGrad(fill, 0)
 	local knob = new("Frame", { Size = UDim2.fromOffset(18, 18), Position = UDim2.fromOffset(3, 3), BackgroundColor3 = Color3.new(1, 1, 1), BorderSizePixel = 0 }, track)
 	corner(knob, 9)
 	local state = false
 	local function visual(v, animate)
 		local d = animate and 0.22 or 0
-		local x = v and 27 or 3
 		if animate then
-			-- ยืดตามทิศทางก่อน แล้วค่อยเด้งเข้าที่
-			tw(knob, 0.09, { Size = UDim2.fromOffset(26, 18), Position = UDim2.fromOffset(v and 19 or 3, 3) })
+			tw(knob, 0.09, { Size = UDim2.fromOffset(26, 18), Position = UDim2.fromOffset(v and 15 or 3, 3) })
 			task.delay(0.09, function()
-				tw(knob, 0.2, { Size = UDim2.fromOffset(18, 18), Position = UDim2.fromOffset(v and 27 or 3, 3) }, BACK)
+				tw(knob, 0.2, { Size = UDim2.fromOffset(18, 18), Position = UDim2.fromOffset(v and 23 or 3, 3) }, BACK)
 			end)
 		else
 			knob.Size = UDim2.fromOffset(18, 18)
-			knob.Position = UDim2.fromOffset(x, 3)
+			knob.Position = UDim2.fromOffset(v and 23 or 3, 3)
 		end
-		tw(track, d, { BackgroundColor3 = v and C.acc or C.off })
-		tw(glow, d, { Transparency = v and 0.55 or 1 })
-		tw(accent, d, { BackgroundTransparency = v and 0 or 1 })
+		tw(fill, d, { BackgroundTransparency = v and 0 or 1 })
+		tw(rs, d, { Transparency = v and 0.55 or 1 })
 	end
 	local function set(v, silent)
 		state = v and true or false
@@ -1238,62 +1311,259 @@ local function toggle(parent, labelKey, init, props, cb, descKey)
 		if not silent and cb then cb(state) end
 	end
 	track.MouseButton1Click:Connect(function() set(not state) end)
-	row.MouseEnter:Connect(function() tw(row, 0.12, { BackgroundColor3 = C.row:Lerp(Color3.new(1, 1, 1), 0.06) }) end)
-	row.MouseLeave:Connect(function() tw(row, 0.15, { BackgroundColor3 = C.row }) end)
+	row.MouseEnter:Connect(function() tw(row, 0.12, { BackgroundColor3 = C.card2:Lerp(Color3.new(1, 1, 1), 0.05) }) end)
+	row.MouseLeave:Connect(function() tw(row, 0.15, { BackgroundColor3 = C.card2 }) end)
 	state = init and true or false
 	visual(state, false)
 	return set, row
 end
 
-local function counter()
-	local n = 0
-	return function() n = n + 1 return n end
+-- ตัวเลือกแบบเลื่อนแถบ (segmented control)
+local function seg(parent, items, props, onPick)
+	local n = #items
+	local f = new("Frame", { BackgroundColor3 = C.panel, BorderSizePixel = 0 }, parent)
+	corner(f, 10)
+	apply(f, props)
+	local pill = new("Frame", { Size = UDim2.new(1 / n, -6, 1, -6), Position = UDim2.new(0, 3, 0, 3), BackgroundColor3 = Color3.new(1, 1, 1), BorderSizePixel = 0, ZIndex = 1 }, f)
+	corner(pill, 8)
+	accGrad(pill, 0)
+	local btns, obj = {}, {}
+	for i, it in ipairs(items) do
+		local b = new("TextButton", {
+			Size = UDim2.new(1 / n, 0, 1, 0), Position = UDim2.new((i - 1) / n, 0, 0, 0), BackgroundTransparency = 1,
+			Text = "", Font = FONTB, TextSize = 12, TextColor3 = C.sub, AutoButtonColor = false, ZIndex = 2,
+		}, f)
+		if it.key then bind(b, "Text", it.key) else b.Text = it.text end
+		b.MouseButton1Click:Connect(function() onPick(it.id) end)
+		btns[it.id] = b
+	end
+	function obj.set(id, animate)
+		for i, it in ipairs(items) do
+			local on = (it.id == id)
+			tw(btns[it.id], 0.2, { TextColor3 = on and C.ink or C.sub })
+			if on then tw(pill, animate == false and 0 or 0.28, { Position = UDim2.new((i - 1) / n, 3, 0, 3) }, QUINT) end
+		end
+	end
+	return obj
+end
+
+-- ช่องตัวเลขแบบ - [ค่า] +
+local function numRow(parent, order, labelKey, key, step, minv, maxv)
+	local row = rowFrame(parent, order, 40)
+	txtK(row, labelKey, { Size = UDim2.new(1, -170, 1, 0), Position = UDim2.fromOffset(14, 0) })
+	local inp
+	local function show(n) return string.format("%g", n) end
+	local function set(n)
+		n = tonumber(n)
+		if n then
+			n = math.floor(n * 100 + 0.5) / 100
+			if minv then n = math.max(minv, n) end
+			if maxv then n = math.min(maxv, n) end
+			CFG[key] = n
+			saveCfg()
+		end
+		inp.Text = show(CFG[key])
+	end
+	btn(row, "–", "ghost", { Size = UDim2.fromOffset(28, 28), Position = UDim2.new(1, -138, 0.5, -14), TextSize = 16 }, function() set((CFG[key] or 0) - (step or 1)) end)
+	inp = box(row, show(CFG[key]), { Size = UDim2.fromOffset(64, 28), Position = UDim2.new(1, -106, 0.5, -14), TextXAlignment = CENTER }, function(t) set(t) end)
+	btn(row, "+", "ghost", { Size = UDim2.fromOffset(28, 28), Position = UDim2.new(1, -38, 0.5, -14), TextSize = 16 }, function() set((CFG[key] or 0) + (step or 1)) end)
+	return row
+end
+
+-- การ์ดกลุ่ม: คืน (frame, ord) ใส่แถวด้านในด้วย LayoutOrder = ord()
+local function group(parent, order, titleKey, icon)
+	local g = new("Frame", { Size = UDim2.new(1, -4, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, BackgroundColor3 = C.card, BorderSizePixel = 0, LayoutOrder = order }, parent)
+	corner(g, 14)
+	stroke(g, C.line, 1, 0.45)
+	pad(g, 10, 10, 10, 10)
+	new("UIListLayout", { Padding = UDim.new(0, 7), SortOrder = Enum.SortOrder.LayoutOrder }, g)
+	local o = counter()
+	local h = new("Frame", { Size = UDim2.new(1, 0, 0, 22), BackgroundTransparency = 1, LayoutOrder = o() }, g)
+	local bar = new("Frame", { Size = UDim2.fromOffset(4, 16), Position = UDim2.fromOffset(0, 3), BackgroundColor3 = Color3.new(1, 1, 1), BorderSizePixel = 0 }, h)
+	corner(bar, 2)
+	accGrad(bar, 90)
+	txt(h, icon or "", { Size = UDim2.fromOffset(22, 22), Position = UDim2.fromOffset(12, 0), TextSize = 15 })
+	txtK(h, titleKey, { Size = UDim2.new(1, -40, 1, 0), Position = UDim2.fromOffset(36, 0), Font = FONTB, TextSize = 14 })
+	return g, o
+end
+
+local function scrollList(parent)
+	local s = new("ScrollingFrame", {
+		BackgroundTransparency = 1, BorderSizePixel = 0, ScrollBarThickness = 3, ScrollBarImageColor3 = C.line,
+		AutomaticCanvasSize = Enum.AutomaticSize.Y, CanvasSize = UDim2.new(), Size = UDim2.new(1, -8, 1, -8), Position = UDim2.fromOffset(4, 4),
+	}, parent)
+	new("UIListLayout", { Padding = UDim.new(0, 8), SortOrder = Enum.SortOrder.LayoutOrder }, s)
+	pad(s, 4, 6, 8, 4)
+	return s
+end
+
+local function tile(parent, labelKey, descKey, icon, role, init, props, cb)
+	local f = new("TextButton", { Text = "", AutoButtonColor = false, BackgroundColor3 = C.card2, BorderSizePixel = 0 }, parent)
+	corner(f, 14)
+	apply(f, props)
+	local st = stroke(f, C.line, 1.2, 0.35)
+	local glow = new("Frame", { Size = UDim2.fromScale(1, 1), BackgroundColor3 = C[role], BackgroundTransparency = 1, BorderSizePixel = 0, ZIndex = 1 }, f)
+	corner(glow, 14)
+	txt(f, icon, { Size = UDim2.fromOffset(28, 28), Position = UDim2.fromOffset(12, 10), TextSize = 22, ZIndex = 2 })
+	local pill = new("Frame", { Size = UDim2.fromOffset(34, 18), Position = UDim2.new(1, -46, 0, 14), BackgroundColor3 = C.panel, BorderSizePixel = 0, ZIndex = 2 }, f)
+	corner(pill, 9)
+	local pl = new("TextLabel", { Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, Text = "OFF", Font = FONTB, TextSize = 10, TextColor3 = C.dim, ZIndex = 3 }, pill)
+	txtK(f, labelKey, { Size = UDim2.new(1, -24, 0, 18), Position = UDim2.fromOffset(12, 44), Font = FONTB, TextSize = 14, ZIndex = 2 })
+	txtK(f, descKey, { Size = UDim2.new(1, -24, 0, 28), Position = UDim2.fromOffset(12, 63), TextSize = 10, TextColor3 = C.sub, TextWrapped = true, TextYAlignment = Enum.TextYAlignment.Top, ZIndex = 2 })
+	fx(f, 0.97)
+	local state = false
+	local function visual(v, animate)
+		local d = animate and 0.2 or 0
+		tw(glow, d, { BackgroundTransparency = v and 0.86 or 1 })
+		tw(st, d, { Color = v and C[role] or C.line, Transparency = v and 0.1 or 0.35 })
+		tw(pill, d, { BackgroundColor3 = v and C[role] or C.panel })
+		pl.Text = v and "ON" or "OFF"
+		tw(pl, d, { TextColor3 = v and C.ink or C.dim })
+	end
+	local function set(v, silent)
+		state = v and true or false
+		visual(state, not silent)
+		if not silent and cb then cb(state) end
+	end
+	f.MouseButton1Click:Connect(function() set(not state) end)
+	state = init and true or false
+	paint(function() visual(state, false) end)
+	return set, f
 end
 
 --------------------------------------------------------------------------
 -- Window
 --------------------------------------------------------------------------
+local conns = {}
 local guiParent = (gethui and gethui()) or game:GetService("CoreGui")
-local oldGui = guiParent:FindFirstChild("JetHubCamera2Gui")
-if oldGui then oldGui:Destroy() end
-local oldGui1 = guiParent:FindFirstChild("JetHubCameraGui")
-if oldGui1 then oldGui1:Destroy() end
-
+for _, nm in ipairs({ "JetHubCamera2Gui", "JetHubCameraGui" }) do
+	local og = guiParent:FindFirstChild(nm)
+	if og then og:Destroy() end
+end
 local gui = new("ScreenGui", { Name = "JetHubCamera2Gui", ResetOnSpawn = false, ZIndexBehavior = Enum.ZIndexBehavior.Sibling }, guiParent)
 
-local W, H, TITLE, FOOT, SIDE = 680, 470, 40, 28, 140
-local win = new("Frame", { Size = UDim2.fromOffset(W, H), Position = UDim2.fromOffset(60, 70), BackgroundColor3 = C.bg, BorderSizePixel = 0, ClipsDescendants = true }, gui)
-corner(win, 16)
-local winScale = new("UIScale", { Scale = 1 }, win)
+local W, H, HEAD, FOOT, SIDE = 760, 500, 54, 30, 150
 
-JH.stroke = new("UIStroke", { Thickness = 1.6, Color = Color3.new(1, 1, 1) }, win)
-JH.grad = new("UIGradient", { Color = ColorSequence.new({
-	ColorSequenceKeypoint.new(0, C.acc), ColorSequenceKeypoint.new(0.5, C.acc2), ColorSequenceKeypoint.new(1, C.acc),
-}) }, JH.stroke)
+local function baseScale()
+	if tonumber(CFG.uiScale) then return math.clamp(CFG.uiScale, 0.5, 1.5) end
+	local cam = workspace.CurrentCamera
+	local vs = cam and cam.ViewportSize or Vector2.new(1280, 720)
+	return math.clamp(math.min(vs.X / (W + 40), vs.Y / (H + 40)), 0.55, 1)
+end
 
-local title = new("Frame", { Size = UDim2.new(1, 0, 0, TITLE), BackgroundColor3 = C.side, BorderSizePixel = 0 }, win)
-JH.logo = txt(title, "JET", { Size = UDim2.fromOffset(50, TITLE), Position = UDim2.fromOffset(14, 0), Font = Enum.Font.GothamBlack, TextSize = 22 })
-JH.logoGrad = new("UIGradient", { Color = ColorSequence.new(C.acc, C.acc2) }, JH.logo)
-txt(title, "HUB _ Camera", { Size = UDim2.new(0.5, 0, 1, 0), Position = UDim2.fromOffset(64, 0), Font = Enum.Font.GothamBold, TextSize = 13, TextColor3 = C.sub })
-JH.moneyLbl = txt(title, "$ --", { Size = UDim2.new(0.4, -14, 1, 0), Position = UDim2.new(0.6, 0, 0, 0), TextXAlignment = Enum.TextXAlignment.Right, Font = Enum.Font.GothamBold, TextColor3 = C.ok })
+-- root = กรอบนอก (ลาก/ย่อ/ซ่อน) , body = กรอบในที่ตัดขอบมน
+local win = new("Frame", { Size = UDim2.fromOffset(W, H), AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.new(0.5, 0, 0.5, -math.floor(H * baseScale() / 2)), BackgroundTransparency = 1 }, gui)
+local winScale = new("UIScale", { Scale = baseScale() }, win)
+new("ImageLabel", {
+	Size = UDim2.new(1, 70, 1, 70), Position = UDim2.fromOffset(-35, -28), BackgroundTransparency = 1,
+	Image = "rbxassetid://1316045217", ImageColor3 = Color3.new(0, 0, 0), ImageTransparency = 0.35,
+	ScaleType = Enum.ScaleType.Slice, SliceCenter = Rect.new(10, 10, 118, 118), ZIndex = 0,
+}, win)
+local body = new("Frame", { Size = UDim2.fromScale(1, 1), BackgroundColor3 = C.bg, BorderSizePixel = 0, ClipsDescendants = true }, win)
+corner(body, 18)
+new("UIGradient", { Color = ColorSequence.new(Color3.fromRGB(16, 18, 38), Color3.fromRGB(8, 9, 18)), Rotation = 62 }, body)
 
-local side = new("Frame", { Size = UDim2.new(0, SIDE, 1, -(TITLE + FOOT)), Position = UDim2.fromOffset(0, TITLE), BackgroundColor3 = C.side, BorderSizePixel = 0 }, win)
-local content = new("Frame", { Size = UDim2.new(1, -SIDE, 1, -(TITLE + FOOT)), Position = UDim2.fromOffset(SIDE, TITLE), BackgroundTransparency = 1 }, win)
-local foot = new("Frame", { Size = UDim2.new(1, 0, 0, FOOT), Position = UDim2.new(0, 0, 1, -FOOT), BackgroundColor3 = C.side, BorderSizePixel = 0 }, win)
-statusLbl = txt(foot, T("ready"), { Size = UDim2.new(1, -20, 1, 0), Position = UDim2.fromOffset(12, 0), TextSize = 12, TextColor3 = C.sub })
+JH.stroke = stroke(body, Color3.new(1, 1, 1), 1.8, 0)
+JH.grad = new("UIGradient", {}, JH.stroke)
+paint(function()
+	JH.grad.Color = ColorSequence.new({ ColorSequenceKeypoint.new(0, C.acc), ColorSequenceKeypoint.new(0.5, C.acc2), ColorSequenceKeypoint.new(1, C.acc) })
+end)
+
+-- Header ---------------------------------------------------------------
+local header = new("Frame", { Size = UDim2.new(1, 0, 0, HEAD), BackgroundColor3 = C.panel, BorderSizePixel = 0 }, body)
+local closeB, miniB
+do
+local hline = new("Frame", { Size = UDim2.new(1, 0, 0, 1), Position = UDim2.new(0, 0, 1, -1), BackgroundColor3 = Color3.new(1, 1, 1), BorderSizePixel = 0 }, header)
+accGrad(hline, 0)
+local badge = new("Frame", { Size = UDim2.fromOffset(34, 34), Position = UDim2.fromOffset(14, 10), BackgroundColor3 = Color3.new(1, 1, 1), BorderSizePixel = 0 }, header)
+corner(badge, 11)
+JH.logoGrad = accGrad(badge, 45)
+txt(badge, "J", { Size = UDim2.fromScale(1, 1), Font = FONTK, TextSize = 22, TextColor3 = C.ink, TextXAlignment = CENTER })
+txt(header, "JET HUB", { Size = UDim2.fromOffset(120, 20), Position = UDim2.fromOffset(58, 8), Font = FONTK, TextSize = 16 })
+txt(header, "Camera  •  v4", { Size = UDim2.fromOffset(160, 16), Position = UDim2.fromOffset(58, 28), Font = FONTB, TextSize = 11, TextColor3 = C.sub })
+
+local function hbtn(txtv, xoff, cb)
+	local b = btn(header, txtv, "ghost", { Size = UDim2.fromOffset(30, 30), AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, xoff, 0.5, 0), TextSize = 14 }, cb)
+	return b
+end
+closeB = hbtn("✕", -14)
+miniB = hbtn("–", -50)
+
+local pillM = new("Frame", { Size = UDim2.fromOffset(0, 30), AutomaticSize = Enum.AutomaticSize.X, AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -92, 0.5, 0), BackgroundColor3 = C.card2, BorderSizePixel = 0 }, header)
+corner(pillM, 15)
+stroke(pillM, C.ok, 1, 0.55)
+new("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal, VerticalAlignment = Enum.VerticalAlignment.Center, Padding = UDim.new(0, 6), SortOrder = Enum.SortOrder.LayoutOrder }, pillM)
+pad(pillM, 0, 12, 0, 12)
+local mdot = new("Frame", { Size = UDim2.fromOffset(8, 8), BackgroundColor3 = C.ok, BorderSizePixel = 0, LayoutOrder = 1 }, pillM)
+corner(mdot, 4)
+JH.moneyLbl = txt(pillM, "$ --", { Size = UDim2.fromOffset(0, 30), AutomaticSize = Enum.AutomaticSize.X, Font = FONTB, TextColor3 = C.ok, TextTruncate = Enum.TextTruncate.None, LayoutOrder = 2 })
+end
+
+-- Side / Content / Footer ------------------------------------------------
+local side = new("Frame", { Size = UDim2.new(0, SIDE, 1, -(HEAD + FOOT)), Position = UDim2.fromOffset(0, HEAD), BackgroundColor3 = C.panel, BorderSizePixel = 0 }, body)
+new("Frame", { Size = UDim2.new(0, 1, 1, 0), Position = UDim2.new(1, -1, 0, 0), BackgroundColor3 = C.line, BackgroundTransparency = 0.5, BorderSizePixel = 0 }, side)
+local content = new("Frame", { Size = UDim2.new(1, -SIDE, 1, -(HEAD + FOOT)), Position = UDim2.fromOffset(SIDE, HEAD), BackgroundTransparency = 1 }, body)
+local foot = new("Frame", { Size = UDim2.new(1, 0, 0, FOOT), Position = UDim2.new(0, 0, 1, -FOOT), BackgroundColor3 = C.panel, BorderSizePixel = 0 }, body)
+new("Frame", { Size = UDim2.new(1, 0, 0, 1), BackgroundColor3 = C.line, BackgroundTransparency = 0.5, BorderSizePixel = 0 }, foot)
+do
+local fdot = new("Frame", { Size = UDim2.fromOffset(7, 7), Position = UDim2.new(0, 12, 0.5, -3), BackgroundColor3 = C.acc, BorderSizePixel = 0 }, foot)
+corner(fdot, 4)
+paint(function() fdot.BackgroundColor3 = C.acc end)
+end
+statusLbl = txt(foot, T("ready"), { Size = UDim2.new(1, -250, 1, 0), Position = UDim2.fromOffset(26, 0), TextSize = 12, TextColor3 = C.sub })
+txtK(foot, "hint_keys", { Size = UDim2.fromOffset(230, FOOT), Position = UDim2.new(1, -242, 0, 0), TextSize = 10, TextColor3 = C.dim, TextXAlignment = RIGHT })
+
+-- Toast แจ้งเตือน -------------------------------------------------------
+do
+local TOAST = {}
+for _, k in ipairs({ "no_remote", "step_fail", "no_hook", "import_bad", "share_fail", "no_clip", "no_writefile", "rec_rejected" }) do TOAST[k] = "bad" end
+for _, k in ipairs({ "stop_first", "close_rec", "pick_file", "need_unit", "import_empty", "stopped" }) do TOAST[k] = "warn" end
+for _, k in ipairs({ "voted", "speed_set", "deleted", "import_ok", "share_ok", "step_ok", "step_deleted", "step_moved", "cleared_saved", "rec_started", "rec_stopped", "unit_selected" }) do TOAST[k] = "ok" end
+
+JH.toasts = new("Frame", { Size = UDim2.fromOffset(310, 250), AnchorPoint = Vector2.new(1, 1), Position = UDim2.new(1, -14, 1, -(FOOT + 10)), BackgroundTransparency = 1, ZIndex = 50 }, body)
+new("UIListLayout", { Padding = UDim.new(0, 6), VerticalAlignment = Enum.VerticalAlignment.Bottom, HorizontalAlignment = Enum.HorizontalAlignment.Right, SortOrder = Enum.SortOrder.LayoutOrder }, JH.toasts)
+local toastN = 0
+JH.onStatus = function(k, text)
+	if k == "ready" or k == "ready_nohook" then return end
+	local col = ({ ok = C.ok, warn = C.warn, bad = C.bad })[TOAST[k] or ""] or C.acc
+	local kids = {}
+	for _, c in ipairs(JH.toasts:GetChildren()) do if c:IsA("CanvasGroup") then kids[#kids + 1] = c end end
+	if #kids >= 4 then kids[1]:Destroy() end
+	toastN = toastN + 1
+	local t = new("CanvasGroup", { Size = UDim2.fromOffset(300, 42), BackgroundColor3 = C.card, BorderSizePixel = 0, GroupTransparency = 1, LayoutOrder = toastN }, JH.toasts)
+	corner(t, 11)
+	stroke(t, col, 1, 0.45)
+	local ts = new("UIScale", { Scale = 0.85 }, t)
+	new("Frame", { Size = UDim2.new(0, 4, 1, 0), BackgroundColor3 = col, BorderSizePixel = 0 }, t)
+	txt(t, text, { Size = UDim2.new(1, -26, 1, 0), Position = UDim2.fromOffset(16, 0), TextSize = 12, TextWrapped = true, TextYAlignment = Enum.TextYAlignment.Center })
+	tw(t, 0.2, { GroupTransparency = 0 })
+	tw(ts, 0.28, { Scale = 1 }, BACK)
+	task.delay(2.8, function()
+		if t.Parent then
+			tw(t, 0.3, { GroupTransparency = 1 })
+			task.delay(0.32, function() if t.Parent then t:Destroy() end end)
+		end
+	end)
+end
+end
 
 -- Tabs ----------------------------------------------------------------
-local TAB_H, TAB_Y0 = 36, 10
+local TAB_H, TAB_Y0 = 38, 10
 local tabs = {}
-JH.indicator = new("Frame", { Size = UDim2.new(1, -14, 0, TAB_H), Position = UDim2.fromOffset(7, TAB_Y0), BackgroundColor3 = C.sel, BorderSizePixel = 0 }, side)
-corner(JH.indicator, 9)
-JH.indBar = new("Frame", { Size = UDim2.new(0, 3, 0.55, 0), Position = UDim2.new(0, 3, 0.225, 0), BackgroundColor3 = C.acc, BorderSizePixel = 0 }, JH.indicator)
+JH.indicator = new("Frame", { Size = UDim2.new(1, -14, 0, TAB_H), Position = UDim2.fromOffset(7, TAB_Y0), BackgroundColor3 = C.card2, BorderSizePixel = 0 }, side)
+corner(JH.indicator, 11)
+local indStroke = stroke(JH.indicator, C.acc, 1, 0.55)
+paint(function() indStroke.Color = C.acc end)
+JH.indBar = new("Frame", { Size = UDim2.new(0, 4, 0.55, 0), Position = UDim2.new(0, 4, 0.225, 0), BackgroundColor3 = Color3.new(1, 1, 1), BorderSizePixel = 0 }, JH.indicator)
 corner(JH.indBar, 2)
+accGrad(JH.indBar, 90)
 
 local function showTab(i, animate)
 	for j, t in ipairs(tabs) do
-		t.btn.TextColor3 = (j == i) and C.text or C.sub
-		if j ~= i then t.page.Visible = false end
+		local on = (j == i)
+		t.lbl.TextColor3 = on and C.text or C.sub
+		t.ico.TextTransparency = on and 0 or 0.35
+		if not on then t.page.Visible = false end
 	end
 	local cur = tabs[i]
 	cur.page.Visible = true
@@ -1311,285 +1581,268 @@ local function showTab(i, animate)
 	CFG.tab = i
 end
 
-local function newPage(key)
+local function newPage(key, icon)
 	local idx = #tabs + 1
 	local page = new("CanvasGroup", { Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, Visible = false }, content)
 	local b = new("TextButton", {
 		Size = UDim2.new(1, -14, 0, TAB_H), Position = UDim2.fromOffset(7, TAB_Y0 + (idx - 1) * (TAB_H + 4)),
-		BackgroundTransparency = 1, Text = "", TextXAlignment = Enum.TextXAlignment.Left, TextColor3 = C.sub,
-		Font = Enum.Font.GothamBold, TextSize = 13, AutoButtonColor = false, BorderSizePixel = 0,
+		BackgroundTransparency = 1, Text = "", AutoButtonColor = false, BorderSizePixel = 0, ZIndex = 3,
 	}, side)
-	new("UIPadding", { PaddingLeft = UDim.new(0, 16) }, b)
-	bind(b, "Text", key)
-	tabs[idx] = { page = page, btn = b }
-	b.MouseEnter:Connect(function() if CFG.tab ~= idx then tw(b, 0.12, { TextColor3 = C.text }) end end)
-	b.MouseLeave:Connect(function() if CFG.tab ~= idx then tw(b, 0.15, { TextColor3 = C.sub }) end end)
+	local ico = txt(b, icon, { Size = UDim2.fromOffset(26, TAB_H), Position = UDim2.fromOffset(14, 0), TextSize = 16, TextXAlignment = CENTER, ZIndex = 3 })
+	local lbl = txt(b, "", { Size = UDim2.new(1, -52, 1, 0), Position = UDim2.fromOffset(46, 0), Font = FONTB, TextColor3 = C.sub, ZIndex = 3 })
+	bind(lbl, "Text", key)
+	tabs[idx] = { page = page, btn = b, lbl = lbl, ico = ico }
+	b.MouseEnter:Connect(function() if CFG.tab ~= idx then tw(lbl, 0.12, { TextColor3 = C.text }) end end)
+	b.MouseLeave:Connect(function() if CFG.tab ~= idx then tw(lbl, 0.15, { TextColor3 = C.sub }) end end)
 	b.MouseButton1Click:Connect(function()
 		if CFG.tab ~= idx then showTab(idx, true) saveCfg() end
 	end)
 	return page
 end
 
-local function scrollList(parent)
-	local s = new("ScrollingFrame", {
-		BackgroundTransparency = 1, BorderSizePixel = 0, ScrollBarThickness = 3, AutomaticCanvasSize = Enum.AutomaticSize.Y,
-		CanvasSize = UDim2.new(), Size = UDim2.new(1, -12, 1, -12), Position = UDim2.fromOffset(6, 6),
-	}, parent)
-	new("UIListLayout", { Padding = UDim.new(0, 5), SortOrder = Enum.SortOrder.LayoutOrder }, s)
-	return s
-end
-
-local function hbar(parent, props)
-	local f = new("Frame", { BackgroundTransparency = 1 }, parent)
-	apply(f, props)
-	new("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal, Padding = UDim.new(0, 5) }, f)
-	return f
-end
-
-local function numRow(scroll, nextOrd, labelKey, key)
-	local row = new("Frame", { Size = UDim2.new(1, -6, 0, 36), BackgroundColor3 = C.row, BorderSizePixel = 0, LayoutOrder = nextOrd() }, scroll)
-	corner(row, 10)
-	txtK(row, labelKey, { Size = UDim2.new(0.62, -10, 1, 0), Position = UDim2.fromOffset(14, 0) })
-	box(row, tostring(CFG[key]), { Size = UDim2.new(0.38, -18, 0, 26), Position = UDim2.new(0.62, 4, 0.5, -13), TextXAlignment = Enum.TextXAlignment.Center }, function(t, b)
-		local n = tonumber(t)
-		if n then CFG[key] = n saveCfg() end
-		b.Text = tostring(CFG[key])
-	end)
-end
-
 --------------------------------------------------------------------------
 -- PAGE: Game
 --------------------------------------------------------------------------
-JH.pGame = newPage("tab_game")
+JH.pGame = newPage("tab_game", "🎮")
 JH.gScroll = scrollList(JH.pGame)
-local go = counter()
+do
+	local go = counter()
 
-txtK(JH.gScroll, "vote_hdr", { Size = UDim2.new(1, -6, 0, 18), TextColor3 = C.sub, TextSize = 12, LayoutOrder = go() })
-JH.modeBar = hbar(JH.gScroll, { Size = UDim2.new(1, -6, 0, 32), LayoutOrder = go() })
-JH.modeBtns = {}
-local function paintModes()
-	for m, b in pairs(JH.modeBtns) do
-		local on = (m == CFG.voteMode)
-		setBtn(b, on and C.acc or C.sel, on and C.bg or C.text)
-	end
-end
-for _, m in ipairs({ "Easy", "Normal", "Hard", "Insane" }) do
-	JH.modeBtns[m] = btnK(JH.modeBar, "mode_" .. m, { Size = UDim2.new(0.25, -4, 1, 0) }, function()
+	local g, o = group(JH.gScroll, go(), "g_vote", "🗳")
+	local modeSeg
+	local modeItems = {}
+	for _, m in ipairs({ "Easy", "Normal", "Hard", "Insane" }) do modeItems[#modeItems + 1] = { id = m, key = "mode_" .. m } end
+	modeSeg = seg(g, modeItems, { Size = UDim2.new(1, 0, 0, 34), LayoutOrder = o() }, function(m)
 		CFG.voteMode = m
 		saveCfg()
-		paintModes()
+		modeSeg.set(m)
 		if fireEvent("ModeVote", m) then status("voted", T("mode_" .. m)) else status("no_remote", "ModeVote") end
 	end)
-end
-paintModes()
-toggle(JH.gScroll, "auto_vote", flags.vote, { Size = UDim2.new(1, -6, 0, 46), LayoutOrder = go() }, function(v) flags.vote = v saveCfg() end, "auto_vote_d")
-numRow(JH.gScroll, go, "vote_every", "voteInterval")
+	modeSeg.set(CFG.voteMode, false)
+	switch(g, "auto_vote", flags.vote, { Size = UDim2.new(1, 0, 0, 46), LayoutOrder = o() }, function(v) flags.vote = v saveCfg() end, "auto_vote_d", "⚡")
+	numRow(g, o(), "vote_every", "voteInterval", 1, 0.1)
 
-txtK(JH.gScroll, "speed_hdr", { Size = UDim2.new(1, -6, 0, 18), TextColor3 = C.sub, TextSize = 12, LayoutOrder = go() })
-JH.speedBar = hbar(JH.gScroll, { Size = UDim2.new(1, -6, 0, 32), LayoutOrder = go() })
-JH.speedBtns = {}
-local function paintSpeed()
-	for s, b in pairs(JH.speedBtns) do
-		local on = (s == CFG.speed)
-		setBtn(b, on and C.acc or C.sel, on and C.bg or C.text)
-	end
-end
-for _, s in ipairs({ 1, 1.5, 2 }) do
-	JH.speedBtns[s] = btn(JH.speedBar, "x" .. s, { Size = UDim2.new(1 / 3, -4, 1, 0) }, function()
+	g, o = group(JH.gScroll, go(), "g_speed", "🚀")
+	local speedSeg
+	speedSeg = seg(g, { { id = 1, text = "x1" }, { id = 1.5, text = "x1.5" }, { id = 2, text = "x2" } }, { Size = UDim2.new(1, 0, 0, 34), LayoutOrder = o() }, function(s)
 		CFG.speed = s
 		saveCfg()
-		paintSpeed()
+		speedSeg.set(s)
 		if invokeFunc("ChangeSpeed", s) then status("speed_set", tostring(s)) else status("no_remote", "ChangeSpeed") end
 	end)
+	speedSeg.set(CFG.speed, false)
+	switch(g, "auto_speed", flags.speed, { Size = UDim2.new(1, 0, 0, 46), LayoutOrder = o() }, function(v) flags.speed = v saveCfg() end, "auto_speed_d", "⚡")
+	numRow(g, o(), "speed_every", "speedInterval", 1, 0.1)
+
+	g, o = group(JH.gScroll, go(), "g_skip", "⏭")
+	switch(g, "auto_skip", flags.skip, { Size = UDim2.new(1, 0, 0, 46), LayoutOrder = o() }, function(v) flags.skip = v saveCfg() end, "auto_skip_d", "⏩")
+	numRow(g, o(), "skip_every", "skipInterval", 0.1, 0.03)
+
+	g, o = group(JH.gScroll, go(), "g_again", "🔁")
+	switch(g, "auto_again", flags.again, { Size = UDim2.new(1, 0, 0, 46), LayoutOrder = o() }, function(v) flags.again = v saveCfg() end, "auto_again_d", "♻")
+	numRow(g, o(), "again_every", "againInterval", 1, 0.1)
+
+	txtK(JH.gScroll, "remember_note", { Size = UDim2.new(1, -4, 0, 20), TextColor3 = C.dim, TextSize = 11, LayoutOrder = go() })
 end
-paintSpeed()
-toggle(JH.gScroll, "auto_speed", flags.speed, { Size = UDim2.new(1, -6, 0, 46), LayoutOrder = go() }, function(v) flags.speed = v saveCfg() end, "auto_speed_d")
-numRow(JH.gScroll, go, "speed_every", "speedInterval")
-
-toggle(JH.gScroll, "auto_skip", flags.skip, { Size = UDim2.new(1, -6, 0, 46), LayoutOrder = go() }, function(v) flags.skip = v saveCfg() end, "auto_skip_d")
-numRow(JH.gScroll, go, "skip_every", "skipInterval")
-
-toggle(JH.gScroll, "auto_again", flags.again, { Size = UDim2.new(1, -6, 0, 46), LayoutOrder = go() }, function(v) flags.again = v saveCfg() end, "auto_again_d")
-numRow(JH.gScroll, go, "again_every", "againInterval")
-
-txtK(JH.gScroll, "remember_note", { Size = UDim2.new(1, -6, 0, 20), TextColor3 = C.sub, TextSize = 11, LayoutOrder = go() })
 
 --------------------------------------------------------------------------
--- PAGE: Macro (การ์ดสถานะ + ปุ่มอัด/เล่น)
+-- PAGE: Macro
 --------------------------------------------------------------------------
-JH.pMacro = newPage("tab_macro")
+JH.pMacro = newPage("tab_macro", "🎬")
 JH.mScroll = scrollList(JH.pMacro)
-local mo = counter()
+do
+	local mo = counter()
 
-JH.card = new("Frame", { Size = UDim2.new(1, -6, 0, 112), BackgroundColor3 = C.row, BorderSizePixel = 0, LayoutOrder = mo() }, JH.mScroll)
-corner(JH.card, 12)
-JH.cardStroke = new("UIStroke", { Color = C.acc, Thickness = 1.2, Transparency = 0.6 }, JH.card)
-JH.dot = new("Frame", { Size = UDim2.fromOffset(9, 9), Position = UDim2.fromOffset(14, 13), BackgroundColor3 = C.sub, BorderSizePixel = 0 }, JH.card)
-corner(JH.dot, 5)
-JH.cStateLbl = txt(JH.card, "", { Size = UDim2.new(0.6, 0, 0, 18), Position = UDim2.fromOffset(30, 8), Font = Enum.Font.GothamBold, TextSize = 12, TextColor3 = C.sub })
-JH.cCountLbl = txt(JH.card, "", { Size = UDim2.new(0.4, -14, 0, 18), Position = UDim2.new(0.6, 0, 0, 8), TextXAlignment = Enum.TextXAlignment.Right, TextSize = 12, TextColor3 = C.sub })
-JH.cL1 = txt(JH.card, "", { Size = UDim2.new(1, -28, 0, 22), Position = UDim2.fromOffset(14, 28), Font = Enum.Font.GothamBold, TextSize = 14 })
-JH.cL2 = txt(JH.card, "", { Size = UDim2.new(1, -28, 0, 16), Position = UDim2.fromOffset(14, 52), TextSize = 12, TextColor3 = C.sub })
-JH.cL3 = txt(JH.card, "", { Size = UDim2.new(1, -28, 0, 16), Position = UDim2.fromOffset(14, 70), TextSize = 12, TextColor3 = C.sub })
-JH.barBg = new("Frame", { Size = UDim2.new(1, -28, 0, 6), Position = UDim2.fromOffset(14, 94), BackgroundColor3 = C.bg, BorderSizePixel = 0 }, JH.card)
-corner(JH.barBg, 3)
-JH.barFill = new("Frame", { Size = UDim2.new(0, 0, 1, 0), BackgroundColor3 = Color3.new(1, 1, 1), BorderSizePixel = 0 }, JH.barBg)
-corner(JH.barFill, 3)
-new("UIGradient", { Color = ColorSequence.new(C.acc, C.acc2) }, JH.barFill)
+	-- การ์ดสถานะ
+	JH.card = new("Frame", { Size = UDim2.new(1, -4, 0, 136), BackgroundColor3 = C.card2, BorderSizePixel = 0, LayoutOrder = mo() }, JH.mScroll)
+	corner(JH.card, 16)
+	new("UIGradient", { Color = ColorSequence.new(Color3.fromRGB(34, 39, 70), Color3.fromRGB(20, 23, 42)), Rotation = 25 }, JH.card)
+	JH.cardStroke = stroke(JH.card, C.acc, 1.4, 0.6)
+	paint(function() JH.cardStroke.Color = C.acc end)
+	JH.chip = new("Frame", { Size = UDim2.fromOffset(120, 24), Position = UDim2.fromOffset(14, 12), BackgroundColor3 = C.sub, BackgroundTransparency = 0.85, BorderSizePixel = 0 }, JH.card)
+	corner(JH.chip, 12)
+	JH.ring = new("Frame", { Size = UDim2.fromOffset(8, 8), AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromOffset(14, 12), BackgroundColor3 = C.sub, BackgroundTransparency = 1, BorderSizePixel = 0 }, JH.chip)
+	corner(JH.ring, 10)
+	JH.dot = new("Frame", { Size = UDim2.fromOffset(8, 8), AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromOffset(14, 12), BackgroundColor3 = C.sub, BorderSizePixel = 0 }, JH.chip)
+	corner(JH.dot, 4)
+	JH.cStateLbl = txt(JH.chip, "", { Size = UDim2.new(1, -30, 1, 0), Position = UDim2.fromOffset(28, 0), Font = FONTB, TextSize = 11, TextColor3 = C.sub })
+	JH.cCountLbl = txt(JH.card, "", { Size = UDim2.new(0.4, -14, 0, 24), Position = UDim2.new(0.6, 0, 0, 12), TextXAlignment = RIGHT, Font = FONTB, TextSize = 13, TextColor3 = C.sub })
+	JH.cL1 = txt(JH.card, "", { Size = UDim2.new(1, -28, 0, 24), Position = UDim2.fromOffset(14, 44), Font = FONTB, TextSize = 15 })
+	JH.cL2 = txt(JH.card, "", { Size = UDim2.new(1, -28, 0, 16), Position = UDim2.fromOffset(14, 70), TextSize = 12, TextColor3 = C.sub })
+	JH.cL3 = txt(JH.card, "", { Size = UDim2.new(1, -28, 0, 16), Position = UDim2.fromOffset(14, 88), TextSize = 12, TextColor3 = C.dim })
+	JH.barBg = new("Frame", { Size = UDim2.new(1, -28, 0, 8), Position = UDim2.new(0, 14, 1, -20), BackgroundColor3 = C.panel, BorderSizePixel = 0, ClipsDescendants = true }, JH.card)
+	corner(JH.barBg, 4)
+	JH.barFill = new("Frame", { Size = UDim2.new(0, 0, 1, 0), BackgroundColor3 = Color3.new(1, 1, 1), BorderSizePixel = 0 }, JH.barBg)
+	corner(JH.barFill, 4)
+	JH.barGrad = accGrad(JH.barFill, 0)
 
-local recSet, playSet, loopSet
-recSet = toggle(JH.mScroll, "record", false, { Size = UDim2.new(1, -6, 0, 46), LayoutOrder = mo() }, function(v)
-	if v then
-		if running then status("stop_first") recSet(false, true) return end
-		if not hookOK then status("no_hook") recSet(false, true) return end
-		steps, prices, meta = {}, {}, {}
-		curIdx = 0
-		lastT = os.clock()
-		recording = true
-		UI.refresh()
-		status("rec_started")
-	else
-		recording = false
-		UI.refresh()
-		status("rec_stopped", #steps)
-		local nm = cleanName(JH.nameBox.Text)
-		if nm ~= "" then CFG.selected = nm saveCfg() end
-		autoSave()
+	-- ปุ่มใหญ่ 3 ปุ่ม
+	local trow = hrow(JH.mScroll, mo(), 98, 8)
+	trow.Size = UDim2.new(1, -4, 0, 98)
+	JH.recSet = tile(trow, "record", "record_d", "⏺", "bad", false, { Size = UDim2.new(1 / 3, -6, 1, 0), LayoutOrder = 1 }, function(v)
+		if v then
+			if running then status("stop_first") JH.recSet(false, true) return end
+			if not hookOK then status("no_hook") JH.recSet(false, true) return end
+			steps, prices, meta = {}, {}, {}
+			curIdx = 0
+			lastT = os.clock()
+			recording = true
+			UI.refresh()
+			status("rec_started")
+		else
+			recording = false
+			UI.refresh()
+			status("rec_stopped", #steps)
+			local nm = cleanName(JH.nameBox.Text)
+			if nm ~= "" then CFG.selected = nm saveCfg() end
+			autoSave()
+		end
+	end)
+	JH.playSet = tile(trow, "play", "play_d", "▶", "ok", flags.play, { Size = UDim2.new(1 / 3, -6, 1, 0), LayoutOrder = 2 }, function(v)
+		flags.play = v
+		saveCfg()
+		if v then
+			if recording then status("close_rec") flags.play = false JH.playSet(false, true) return end
+			if not runMacro(1) then flags.play = false JH.playSet(false, true) end
+		else
+			stopMacro()
+			status("stopped")
+		end
+	end)
+	UI.playOff = function() JH.playSet(false, true) end
+	tile(trow, "loop", "loop_d", "🔁", "acc", flags.loop, { Size = UDim2.new(1 / 3, -6, 1, 0), LayoutOrder = 3 }, function(v)
+		flags.loop = v
+		saveCfg()
+	end)
+
+	-- คลังมาโคร
+	local g, o = group(JH.mScroll, mo(), "g_files", "📁")
+	JH.nameRow = rowFrame(g, o(), 40)
+	txtK(JH.nameRow, "macro_name", { Size = UDim2.new(0.4, -10, 1, 0), Position = UDim2.fromOffset(14, 0), Font = FONTB })
+	JH.nameBox = box(JH.nameRow, CFG.selected or "Macro1", { Size = UDim2.new(0.6, -18, 0, 28), Position = UDim2.new(0.4, 4, 0.5, -14), TextXAlignment = CENTER })
+
+	local selFile = CFG.selected
+	local function refreshFiles()
+		for _, ch in ipairs(JH.fileList:GetChildren()) do
+			if ch:IsA("TextButton") then ch:Destroy() end
+		end
+		for i, n in ipairs(listMacros()) do
+			local on = (n == selFile)
+			local b = new("TextButton", {
+				Size = UDim2.new(1, 0, 0, 32), BackgroundColor3 = on and Color3.new(1, 1, 1) or C.card2, Text = "", AutoButtonColor = false,
+				BorderSizePixel = 0, LayoutOrder = i,
+			}, JH.fileList)
+			corner(b, 9)
+			if on then new("UIGradient", { Color = ColorSequence.new(C.acc, C.acc2) }, b) end
+			txt(b, on and "✔" or "📄", { Size = UDim2.fromOffset(24, 32), Position = UDim2.fromOffset(8, 0), TextSize = 13, TextColor3 = on and C.ink or C.text, TextXAlignment = CENTER })
+			txt(b, n, { Size = UDim2.new(1, -44, 1, 0), Position = UDim2.fromOffset(36, 0), Font = FONTB, TextSize = 12, TextColor3 = on and C.ink or C.text })
+			fx(b, 0.98)
+			b.MouseButton1Click:Connect(function()
+				if running or recording then status("stop_first") return end
+				selFile = n
+				JH.nameBox.Text = n
+				loadMacro(n)
+				refreshFiles()
+			end)
+		end
 	end
-end, "record_d")
+	JH.refreshFiles = refreshFiles
 
-playSet = toggle(JH.mScroll, "play", flags.play, { Size = UDim2.new(1, -6, 0, 46), LayoutOrder = mo() }, function(v)
-	flags.play = v
-	saveCfg()
-	if v then
-		if recording then status("close_rec") flags.play = false playSet(false, true) return end
-		if not runMacro(1) then flags.play = false playSet(false, true) end
-	else
-		stopMacro()
-		status("stopped")
-	end
-end, "play_d")
-UI.playOff = function() playSet(false, true) end
+	local br = hrow(g, o(), 34, 6)
+	btnK(br, "save", "ok", { Size = UDim2.new(0.34, -4, 1, 0), LayoutOrder = 1 }, function()
+		if recording then status("close_rec") return end
+		if saveMacro(JH.nameBox.Text) then selFile = cleanName(JH.nameBox.Text) refreshFiles() end
+	end)
+	btnK(br, "refresh", "ghost", { Size = UDim2.new(0.33, -4, 1, 0), LayoutOrder = 2 }, function() refreshFiles() end)
+	btnK(br, "delete", "bad", { Size = UDim2.new(0.33, -4, 1, 0), LayoutOrder = 3 }, function()
+		if not selFile then status("pick_file") return end
+		if delfile then pcall(delfile, filePath(selFile)) end
+		if CFG.selected == selFile then CFG.selected = nil saveCfg() end
+		status("deleted", selFile)
+		selFile = nil
+		refreshFiles()
+	end)
 
-loopSet = toggle(JH.mScroll, "loop", flags.loop, { Size = UDim2.new(1, -6, 0, 46), LayoutOrder = mo() }, function(v)
-	flags.loop = v
-	saveCfg()
-end, "loop_d")
+	local sr = hrow(g, o(), 34, 6)
+	btnK(sr, "share", "acc", { Size = UDim2.new(0.5, -3, 1, 0), LayoutOrder = 1 }, function()
+		if not selFile then status("pick_file") return end
+		local code = makeShareCode(selFile)
+		if not code then status("share_fail") return end
+		if setClip(code) then status("share_ok", selFile) else status("no_clip") end
+	end)
+	btnK(sr, "import_btn", "ghost", { Size = UDim2.new(0.5, -3, 1, 0), LayoutOrder = 2 }, function()
+		if running or recording then status("stop_first") return end
+		local code = JH.importBox.Text
+		if code:gsub("%s", "") == "" then code = getClip() or "" end
+		local name, n = importCode(code)
+		if not name then
+			if n == "empty" then status("import_empty")
+			elseif n == "nowrite" then status("no_writefile")
+			else status("import_bad") end
+			return
+		end
+		JH.importBox.Text = ""
+		selFile = name
+		JH.nameBox.Text = name
+		loadMacro(name)
+		refreshFiles()
+		status("import_ok", name, n)
+	end)
+	JH.importBox = box(g, "", { Size = UDim2.new(1, 0, 0, 32), LayoutOrder = o(), TextXAlignment = LEFT, TextTruncate = Enum.TextTruncate.AtEnd })
+	pad(JH.importBox, 0, 8, 0, 10)
+	bind(JH.importBox, "PlaceholderText", "import_ph")
 
-JH.nameRow = new("Frame", { Size = UDim2.new(1, -6, 0, 36), BackgroundColor3 = C.row, BorderSizePixel = 0, LayoutOrder = mo() }, JH.mScroll)
-corner(JH.nameRow, 10)
-txtK(JH.nameRow, "macro_name", { Size = UDim2.new(0.4, -10, 1, 0), Position = UDim2.fromOffset(14, 0) })
-JH.nameBox = box(JH.nameRow, CFG.selected or "Macro1", { Size = UDim2.new(0.6, -18, 0, 26), Position = UDim2.new(0.4, 4, 0.5, -13), TextXAlignment = Enum.TextXAlignment.Center })
-
-local selFile = CFG.selected
-local function refreshFiles()
-	for _, ch in ipairs(JH.fileList:GetChildren()) do
-		if ch:IsA("TextButton") then ch:Destroy() end
-	end
-	for _, n in ipairs(listMacros()) do
-		local on = (n == selFile)
-		local b = btn(JH.fileList, n, { Size = UDim2.new(1, -6, 0, 28), BackgroundColor3 = on and C.acc or C.row, TextColor3 = on and C.bg or C.text, TextXAlignment = Enum.TextXAlignment.Left }, nil, true)
-		hoverable(b, false)
-		new("UIPadding", { PaddingLeft = UDim.new(0, 10) }, b)
-		b.MouseButton1Click:Connect(function()
-			if running or recording then status("stop_first") return end
-			selFile = n
-			JH.nameBox.Text = n
-			loadMacro(n)
-			refreshFiles()
-		end)
-	end
+	txtK(g, "saved_macros", { Size = UDim2.new(1, 0, 0, 16), TextColor3 = C.sub, TextSize = 11, LayoutOrder = o() })
+	JH.fileList = new("ScrollingFrame", {
+		Size = UDim2.new(1, 0, 0, 140), BackgroundColor3 = C.panel, BorderSizePixel = 0, ScrollBarThickness = 3, ScrollBarImageColor3 = C.line,
+		AutomaticCanvasSize = Enum.AutomaticSize.Y, CanvasSize = UDim2.new(), LayoutOrder = o(),
+	}, g)
+	corner(JH.fileList, 11)
+	new("UIListLayout", { Padding = UDim.new(0, 4), SortOrder = Enum.SortOrder.LayoutOrder }, JH.fileList)
+	pad(JH.fileList, 5, 5, 5, 5)
 end
 
-JH.btnRow = hbar(JH.mScroll, { Size = UDim2.new(1, -6, 0, 32), LayoutOrder = mo() })
-btnK(JH.btnRow, "save", { Size = UDim2.new(0.34, -4, 1, 0), BackgroundColor3 = C.ok, TextColor3 = C.bg }, function()
-	if recording then status("close_rec") return end
-	if saveMacro(JH.nameBox.Text) then selFile = cleanName(JH.nameBox.Text) refreshFiles() end
-end)
-btnK(JH.btnRow, "refresh", { Size = UDim2.new(0.33, -4, 1, 0) }, function() refreshFiles() end)
-btnK(JH.btnRow, "delete", { Size = UDim2.new(0.33, -4, 1, 0), BackgroundColor3 = C.bad }, function()
-	if not selFile then status("pick_file") return end
-	if delfile then pcall(delfile, filePath(selFile)) end
-	if CFG.selected == selFile then CFG.selected = nil saveCfg() end
-	status("deleted", selFile)
-	selFile = nil
-	refreshFiles()
-end)
-
-JH.shareRow = hbar(JH.mScroll, { Size = UDim2.new(1, -6, 0, 32), LayoutOrder = mo() })
-btnK(JH.shareRow, "share", { Size = UDim2.new(0.5, -3, 1, 0), BackgroundColor3 = C.acc, TextColor3 = C.bg }, function()
-	if not selFile then status("pick_file") return end
-	local code = makeShareCode(selFile)
-	if not code then status("share_fail") return end
-	if setClip(code) then status("share_ok", selFile) else status("no_clip") end
-end)
-btnK(JH.shareRow, "import_btn", { Size = UDim2.new(0.5, -3, 1, 0), BackgroundColor3 = C.acc2, TextColor3 = C.bg }, function()
-	if running or recording then status("stop_first") return end
-	local code = JH.importBox.Text
-	if code:gsub("%s", "") == "" then code = getClip() or "" end
-	local name, n = importCode(code)
-	if not name then
-		if n == "empty" then status("import_empty")
-		elseif n == "nowrite" then status("no_writefile")
-		else status("import_bad") end
-		return
-	end
-	JH.importBox.Text = ""
-	selFile = name
-	JH.nameBox.Text = name
-	loadMacro(name)
-	refreshFiles()
-	status("import_ok", name, n)
-end)
-JH.importBox = box(JH.mScroll, "", { Size = UDim2.new(1, -6, 0, 30), LayoutOrder = mo(), TextXAlignment = Enum.TextXAlignment.Left, ClearTextOnFocus = false, TextTruncate = Enum.TextTruncate.AtEnd })
-bind(JH.importBox, "PlaceholderText", "import_ph")
-
-txtK(JH.mScroll, "saved_macros", { Size = UDim2.new(1, -6, 0, 18), TextColor3 = C.sub, TextSize = 12, LayoutOrder = mo() })
-JH.fileList = new("ScrollingFrame", {
-	Size = UDim2.new(1, -6, 0, 130), BackgroundColor3 = C.side, BorderSizePixel = 0, ScrollBarThickness = 3,
-	AutomaticCanvasSize = Enum.AutomaticSize.Y, CanvasSize = UDim2.new(), LayoutOrder = mo(),
-}, JH.mScroll)
-corner(JH.fileList, 10)
-new("UIListLayout", { Padding = UDim.new(0, 3) }, JH.fileList)
-new("UIPadding", { PaddingTop = UDim.new(0, 4), PaddingLeft = UDim.new(0, 4), PaddingRight = UDim.new(0, 4) }, JH.fileList)
-
 --------------------------------------------------------------------------
--- PAGE: Prices (เลือกยูนิต -> Select -> แก้ราคาตามขั้น)
+-- PAGE: Prices
 --------------------------------------------------------------------------
-JH.pPrices = newPage("tab_prices")
+JH.pPrices = newPage("tab_prices", "💰")
 local selUnit, pendingUnit = nil, nil
 
-JH.pBar = hbar(JH.pPrices, { Size = UDim2.new(1, -12, 0, 36), Position = UDim2.fromOffset(6, 6) })
-toggle(JH.pBar, "lock_all", CFG.priceLockAll, { Size = UDim2.new(0.5, -3, 1, 0) }, function(v)
+JH.pBar = hrow(JH.pPrices, 1, 44, 8)
+JH.pBar.Position = UDim2.fromOffset(6, 6)
+JH.pBar.Size = UDim2.new(1, -16, 0, 44)
+switch(JH.pBar, "lock_all", CFG.priceLockAll, { Size = UDim2.new(0.5, -4, 1, 0), LayoutOrder = 1 }, function(v)
 	CFG.priceLockAll = v
 	saveCfg()
 	UI.refresh()
-end)
-toggle(JH.pBar, "auto_learn", CFG.autoLearn, { Size = UDim2.new(0.5, -3, 1, 0) }, function(v)
+end, nil, "🔒")
+switch(JH.pBar, "auto_learn", CFG.autoLearn, { Size = UDim2.new(0.5, -4, 1, 0), LayoutOrder = 2 }, function(v)
 	CFG.autoLearn = v
 	saveCfg()
-end)
+end, nil, "🧠")
 
-txtK(JH.pPrices, "units_hdr", { Size = UDim2.new(1, -12, 0, 16), Position = UDim2.fromOffset(8, 48), TextColor3 = C.sub, TextSize = 11 })
+txtK(JH.pPrices, "units_hdr", { Size = UDim2.new(1, -16, 0, 16), Position = UDim2.fromOffset(10, 56), TextColor3 = C.sub, TextSize = 11 })
 JH.chipBar = new("ScrollingFrame", {
-	Size = UDim2.new(1, -104, 0, 36), Position = UDim2.fromOffset(6, 66), BackgroundColor3 = C.side, BorderSizePixel = 0,
+	Size = UDim2.new(1, -118, 0, 40), Position = UDim2.fromOffset(6, 74), BackgroundColor3 = C.panel, BorderSizePixel = 0,
 	ScrollBarThickness = 0, ScrollingDirection = Enum.ScrollingDirection.X, AutomaticCanvasSize = Enum.AutomaticSize.X, CanvasSize = UDim2.new(),
 }, JH.pPrices)
-corner(JH.chipBar, 10)
-new("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal, Padding = UDim.new(0, 5), VerticalAlignment = Enum.VerticalAlignment.Center }, JH.chipBar)
-new("UIPadding", { PaddingLeft = UDim.new(0, 6), PaddingRight = UDim.new(0, 6) }, JH.chipBar)
+corner(JH.chipBar, 12)
+stroke(JH.chipBar, C.line, 1, 0.5)
+new("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal, Padding = UDim.new(0, 6), VerticalAlignment = Enum.VerticalAlignment.Center, SortOrder = Enum.SortOrder.LayoutOrder }, JH.chipBar)
+pad(JH.chipBar, 0, 8, 0, 8)
 
-JH.selectBtn = btnK(JH.pPrices, "select", { Size = UDim2.fromOffset(86, 36), Position = UDim2.new(1, -92, 0, 66), BackgroundColor3 = C.acc2, TextColor3 = C.bg })
+JH.selectBtn = btnK(JH.pPrices, "select", "acc", { Size = UDim2.fromOffset(100, 40), Position = UDim2.new(1, -106, 0, 74), TextSize = 13 })
 
-JH.unitTitle = txt(JH.pPrices, "", { Size = UDim2.new(1, -12, 0, 20), Position = UDim2.fromOffset(8, 108), Font = Enum.Font.GothamBold, TextSize = 13 })
-JH.stageGroup = new("CanvasGroup", { Size = UDim2.new(1, -12, 1, -134), Position = UDim2.fromOffset(6, 130), BackgroundColor3 = C.side, BorderSizePixel = 0 }, JH.pPrices)
-corner(JH.stageGroup, 10)
+JH.unitTitle = txt(JH.pPrices, "", { Size = UDim2.new(1, -16, 0, 22), Position = UDim2.fromOffset(10, 122), Font = FONTB, TextSize = 14 })
+JH.stageGroup = new("CanvasGroup", { Size = UDim2.new(1, -12, 1, -154), Position = UDim2.fromOffset(6, 148), BackgroundColor3 = C.panel, BorderSizePixel = 0 }, JH.pPrices)
+corner(JH.stageGroup, 12)
+stroke(JH.stageGroup, C.line, 1, 0.5)
 JH.stageList = new("ScrollingFrame", {
-	Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, BorderSizePixel = 0, ScrollBarThickness = 3,
+	Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, BorderSizePixel = 0, ScrollBarThickness = 3, ScrollBarImageColor3 = C.line,
 	AutomaticCanvasSize = Enum.AutomaticSize.Y, CanvasSize = UDim2.new(),
 }, JH.stageGroup)
-new("UIListLayout", { Padding = UDim.new(0, 4), SortOrder = Enum.SortOrder.LayoutOrder }, JH.stageList)
-new("UIPadding", { PaddingTop = UDim.new(0, 5), PaddingLeft = UDim.new(0, 5), PaddingRight = UDim.new(0, 5), PaddingBottom = UDim.new(0, 5) }, JH.stageList)
+new("UIListLayout", { Padding = UDim.new(0, 5), SortOrder = Enum.SortOrder.LayoutOrder }, JH.stageList)
+pad(JH.stageList, 6, 8, 6, 6)
 
 local function unitList()
 	local seen, out = {}, {}
@@ -1607,7 +1860,8 @@ JH.chipBtns = {}
 local function paintChips()
 	for name, b in pairs(JH.chipBtns) do
 		local on = (name == pendingUnit)
-		setBtn(b, on and C.acc or C.row, on and C.bg or C.text)
+		b.G.Enabled = on
+		tw(b, 0.18, { BackgroundColor3 = on and Color3.new(1, 1, 1) or C.card2, TextColor3 = on and C.ink or C.text })
 	end
 end
 
@@ -1631,11 +1885,15 @@ local function rebuildStages(animate)
 	JH.unitTitle.Text = T("unit_title", selUnit, math.floor(maxStage))
 	for st = 1, maxStage do
 		local p = pslot(selUnit, st, true)
-		local row = new("Frame", { Size = UDim2.new(1, -6, 0, 36), BackgroundColor3 = C.row, BorderSizePixel = 0, LayoutOrder = st }, JH.stageList)
-		corner(row, 9)
-		txt(row, T(st == 1 and "stage_place" or "stage_up", st), { Size = UDim2.new(0, 190, 1, 0), Position = UDim2.fromOffset(12, 0), Font = Enum.Font.GothamBold })
-		txt(row, "x" .. (uses[st] or 0), { Size = UDim2.fromOffset(40, 36), Position = UDim2.fromOffset(200, 0), TextColor3 = C.sub, TextSize = 12 })
-		box(row, string.format("%.0f", p.price or 0), { Size = UDim2.fromOffset(120, 26), Position = UDim2.fromOffset(250, 5), TextXAlignment = Enum.TextXAlignment.Center }, function(t)
+		local row = new("Frame", { Size = UDim2.new(1, 0, 0, 42), BackgroundColor3 = C.card, BorderSizePixel = 0, LayoutOrder = st }, JH.stageList)
+		corner(row, 11)
+		local bdg = new("Frame", { Size = UDim2.fromOffset(26, 26), Position = UDim2.fromOffset(9, 8), BackgroundColor3 = Color3.new(1, 1, 1), BorderSizePixel = 0 }, row)
+		corner(bdg, 8)
+		new("UIGradient", { Color = ColorSequence.new(C.acc, C.acc2), Rotation = 45 }, bdg)
+		txt(bdg, tostring(st), { Size = UDim2.fromScale(1, 1), Font = FONTK, TextSize = 12, TextColor3 = C.ink, TextXAlignment = CENTER })
+		txt(row, T(st == 1 and "stage_place" or "stage_up", st), { Size = UDim2.new(1, -310, 1, 0), Position = UDim2.fromOffset(44, 0), Font = FONTB })
+		txt(row, "x" .. (uses[st] or 0), { Size = UDim2.fromOffset(34, 42), Position = UDim2.new(1, -262, 0, 0), TextColor3 = C.dim, TextSize = 12, TextXAlignment = CENTER })
+		box(row, string.format("%.0f", p.price or 0), { Size = UDim2.fromOffset(120, 28), Position = UDim2.new(1, -224, 0.5, -14), TextXAlignment = CENTER }, function(t)
 			local n = parseNum(t)
 			if n then
 				p.price = n
@@ -1645,7 +1903,7 @@ local function rebuildStages(animate)
 			rebuildStages(false)
 		end)
 		local locked = p.locked or CFG.priceLockAll
-		local lk = btn(row, locked and T("lock_on") or T("lock_off"), { Size = UDim2.fromOffset(80, 26), Position = UDim2.fromOffset(382, 5), BackgroundColor3 = locked and C.acc or C.off, TextColor3 = locked and C.bg or C.text })
+		local lk = btn(row, locked and T("lock_on") or T("lock_off"), locked and "acc" or "ghost", { Size = UDim2.fromOffset(88, 28), Position = UDim2.new(1, -96, 0.5, -14) })
 		lk.MouseButton1Click:Connect(function()
 			p.locked = not p.locked
 			autoSave()
@@ -1665,16 +1923,22 @@ local function rebuildChips()
 	JH.chipBtns = {}
 	local units = unitList()
 	if #units == 0 then
-		txtK(JH.chipBar, "no_units", { Size = UDim2.fromOffset(160, 30), TextColor3 = C.sub })
+		txtK(JH.chipBar, "no_units", { Size = UDim2.fromOffset(200, 30), TextColor3 = C.sub })
 		selUnit, pendingUnit = nil, nil
 		return
 	end
 	local found = false
 	for _, u in ipairs(units) do if u == selUnit then found = true end end
 	if not found then selUnit = nil end
-	for _, u in ipairs(units) do
-		local b = btn(JH.chipBar, u, { AutomaticSize = Enum.AutomaticSize.X, Size = UDim2.fromOffset(20, 26), BackgroundColor3 = C.row }, nil, true)
-		new("UIPadding", { PaddingLeft = UDim.new(0, 12), PaddingRight = UDim.new(0, 12) }, b)
+	for i, u in ipairs(units) do
+		local b = new("TextButton", {
+			Text = u, AutomaticSize = Enum.AutomaticSize.X, Size = UDim2.fromOffset(20, 28), BackgroundColor3 = C.card2, TextColor3 = C.text,
+			Font = FONTB, TextSize = 12, AutoButtonColor = false, BorderSizePixel = 0, LayoutOrder = i,
+		}, JH.chipBar)
+		corner(b, 14)
+		pad(b, 0, 14, 0, 14)
+		new("UIGradient", { Name = "G", Color = ColorSequence.new(C.acc, C.acc2), Enabled = false }, b)
+		fx(b, 0.95)
 		b.MouseButton1Click:Connect(function()
 			pendingUnit = u
 			paintChips()
@@ -1692,12 +1956,17 @@ JH.selectBtn.MouseButton1Click:Connect(function()
 end)
 
 --------------------------------------------------------------------------
--- PAGE: Steps (ดูลำดับ / เลื่อน / ลบ / ทดสอบทีละสเต็ป)
+-- PAGE: Steps
 --------------------------------------------------------------------------
-JH.pSteps = newPage("tab_steps")
-JH.bar4 = hbar(JH.pSteps, { Size = UDim2.new(1, -12, 0, 30), Position = UDim2.fromOffset(6, 6) })
-JH.stepsStatus = txt(JH.bar4, "", { Size = UDim2.new(0.6, -3, 1, 0), TextColor3 = C.sub, TextSize = 12 })
-btnK(JH.bar4, "clear_all", { Size = UDim2.new(0.4, -3, 1, 0), BackgroundColor3 = C.bad }, function()
+JH.pSteps = newPage("tab_steps", "📋")
+JH.bar4 = new("Frame", { Size = UDim2.new(1, -16, 0, 36), Position = UDim2.fromOffset(6, 6), BackgroundTransparency = 1 }, JH.pSteps)
+do
+local cchip = new("Frame", { Size = UDim2.fromOffset(120, 30), Position = UDim2.fromOffset(0, 3), BackgroundColor3 = C.card2, BorderSizePixel = 0 }, JH.bar4)
+corner(cchip, 15)
+stroke(cchip, C.line, 1, 0.4)
+JH.stepsStatus = txt(cchip, "", { Size = UDim2.fromScale(1, 1), Font = FONTB, TextSize = 12, TextColor3 = C.text, TextXAlignment = CENTER })
+end
+btnK(JH.bar4, "clear_all", "bad", { Size = UDim2.fromOffset(120, 32), AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, 0, 0, 2) }, function()
 	if running or recording then status("stop_first") return end
 	steps, prices, meta = {}, {}, {}
 	curIdx = 0
@@ -1707,49 +1976,60 @@ btnK(JH.bar4, "clear_all", { Size = UDim2.new(0.4, -3, 1, 0), BackgroundColor3 =
 end)
 
 JH.stepList = new("ScrollingFrame", {
-	Size = UDim2.new(1, -12, 1, -48), Position = UDim2.fromOffset(6, 42), BackgroundColor3 = C.side, BorderSizePixel = 0,
-	ScrollBarThickness = 3, AutomaticCanvasSize = Enum.AutomaticSize.Y, CanvasSize = UDim2.new(),
+	Size = UDim2.new(1, -12, 1, -52), Position = UDim2.fromOffset(6, 46), BackgroundColor3 = C.panel, BorderSizePixel = 0,
+	ScrollBarThickness = 3, ScrollBarImageColor3 = C.line, AutomaticCanvasSize = Enum.AutomaticSize.Y, CanvasSize = UDim2.new(),
 }, JH.pSteps)
-corner(JH.stepList, 10)
-new("UIListLayout", { Padding = UDim.new(0, 3), SortOrder = Enum.SortOrder.LayoutOrder }, JH.stepList)
-new("UIPadding", { PaddingTop = UDim.new(0, 4), PaddingLeft = UDim.new(0, 4), PaddingRight = UDim.new(0, 4), PaddingBottom = UDim.new(0, 4) }, JH.stepList)
+corner(JH.stepList, 12)
+stroke(JH.stepList, C.line, 1, 0.5)
+new("UIListLayout", { Padding = UDim.new(0, 4), SortOrder = Enum.SortOrder.LayoutOrder }, JH.stepList)
+pad(JH.stepList, 6, 8, 6, 6)
 
-local stepRows = {}
+JH.stepRows = {}
 local function refreshSteps()
 	for _, ch in ipairs(JH.stepList:GetChildren()) do
 		if ch:IsA("Frame") then ch:Destroy() end
 	end
-	stepRows = {}
+	JH.stepRows = {}
 	for i, s in ipairs(steps) do
-		local row = new("Frame", { Size = UDim2.new(1, -6, 0, 30), BackgroundColor3 = C.row, BorderSizePixel = 0, LayoutOrder = i }, JH.stepList)
-		corner(row, 8)
-		stepRows[i] = row
-		txt(row, string.format("#%d  %s", i, describe(i)), { Size = UDim2.fromOffset(280, 30), Position = UDim2.fromOffset(10, 0), TextSize = 12 })
+		local row = new("Frame", { Size = UDim2.new(1, 0, 0, 42), BackgroundColor3 = C.card, BorderSizePixel = 0, LayoutOrder = i }, JH.stepList)
+		corner(row, 11)
+		JH.stepRows[i] = row
+		local tcol = (s.type == "add" and C.ok) or (s.type == "upgrade" and C.acc) or C.bad
+		local sb = new("Frame", { Size = UDim2.fromOffset(4, 22), Position = UDim2.fromOffset(8, 10), BackgroundColor3 = tcol, BorderSizePixel = 0 }, row)
+		corner(sb, 2)
+		txt(row, "#" .. i, { Size = UDim2.fromOffset(34, 42), Position = UDim2.fromOffset(18, 0), Font = FONTB, TextSize = 11, TextColor3 = C.dim })
+		txt(row, describe(i), { Size = UDim2.new(1, -300, 1, 0), Position = UDim2.fromOffset(54, 0), Font = FONTB, TextSize = 12 })
 		local pr = priceOf(i)
-		txt(row, (s.type ~= "sell" and pr > 0) and ("$ " .. fmt(pr)) or "-", { Size = UDim2.fromOffset(80, 30), Position = UDim2.fromOffset(292, 0), TextSize = 12, TextColor3 = C.sub, TextXAlignment = Enum.TextXAlignment.Center })
-		btn(row, "^", { Size = UDim2.fromOffset(26, 22), Position = UDim2.fromOffset(376, 4) }, function()
+		local has = (s.type ~= "sell" and pr > 0)
+		local pill = new("Frame", { Size = UDim2.fromOffset(68, 22), Position = UDim2.new(1, -240, 0.5, -11), BackgroundColor3 = C.panel, BorderSizePixel = 0 }, row)
+		corner(pill, 11)
+		txt(pill, has and ("$ " .. fmt(pr)) or "-", { Size = UDim2.fromScale(1, 1), TextSize = 11, Font = FONTB, TextColor3 = has and C.ok or C.dim, TextXAlignment = CENTER })
+		local function ib(txtv, x, role, cb)
+			return btn(row, txtv, role, { Size = UDim2.fromOffset(28, 28), Position = UDim2.new(1, x, 0.5, -14), TextSize = 12 }, cb)
+		end
+		ib("▲", -164, "ghost", function()
 			if running or recording then status("stop_first") return end
 			if i > 1 then steps[i], steps[i - 1] = steps[i - 1], steps[i] autoSave(nil, true) status("step_moved", CFG.selected or "AutoMacro") UI.refresh() end
-		end, true)
-		btn(row, "v", { Size = UDim2.fromOffset(26, 22), Position = UDim2.fromOffset(404, 4) }, function()
+		end)
+		ib("▼", -132, "ghost", function()
 			if running or recording then status("stop_first") return end
 			if i < #steps then steps[i], steps[i + 1] = steps[i + 1], steps[i] autoSave(nil, true) status("step_moved", CFG.selected or "AutoMacro") UI.refresh() end
-		end, true)
-		btn(row, "x", { Size = UDim2.fromOffset(26, 22), Position = UDim2.fromOffset(432, 4), BackgroundColor3 = C.bad }, function()
+		end)
+		ib("✕", -100, "bad", function()
 			if running or recording then status("stop_first") return end
 			table.remove(steps, i)
 			autoSave(nil, true)
 			status("step_deleted", i, CFG.selected or "AutoMacro")
 			UI.refresh()
-		end, true)
-		local doB = btn(row, "", { Size = UDim2.fromOffset(44, 22), Position = UDim2.fromOffset(462, 4), BackgroundColor3 = C.acc2, TextColor3 = C.bg }, function()
+		end)
+		local doB = btn(row, "", "acc", { Size = UDim2.fromOffset(60, 28), Position = UDim2.new(1, -68, 0.5, -14) }, function()
 			if running or recording then status("stop_first") return end
 			task.spawn(function()
 				local t0 = os.clock()
 				local ok = execStep(s, function() return os.clock() - t0 < 20 end, i)
 				status(ok and "step_ok" or "step_fail", i)
 			end)
-		end, true)
+		end)
 		bind(doB, "Text", "do_step")
 	end
 	JH.stepsStatus.Text = T("steps_count", #steps)
@@ -1774,50 +2054,92 @@ end
 --------------------------------------------------------------------------
 -- PAGE: Settings
 --------------------------------------------------------------------------
-JH.pSet = newPage("tab_settings")
+JH.pSet = newPage("tab_settings", "⚙")
 JH.sScroll = scrollList(JH.pSet)
-local so = counter()
+do
+	local so = counter()
+	local g, o = group(JH.sScroll, so(), "g_interface", "🎨")
 
--- ภาษา
-JH.langRow = new("Frame", { Size = UDim2.new(1, -6, 0, 44), BackgroundColor3 = C.row, BorderSizePixel = 0, LayoutOrder = so() }, JH.sScroll)
-corner(JH.langRow, 10)
-txtK(JH.langRow, "language", { Size = UDim2.new(0.4, 0, 1, 0), Position = UDim2.fromOffset(14, 0), Font = Enum.Font.GothamBold })
-JH.langBtns = {}
-local function paintLang()
-	for code, b in pairs(JH.langBtns) do
-		local on = (CFG.lang == code)
-		setBtn(b, on and C.acc or C.sel, on and C.bg or C.text)
+	-- ภาษา
+	JH.langRow = rowFrame(g, o(), 46)
+	txtK(JH.langRow, "language", { Size = UDim2.new(0.4, 0, 1, 0), Position = UDim2.fromOffset(14, 0), Font = FONTB })
+	local langSeg
+	langSeg = seg(JH.langRow, { { id = "en", text = "English" }, { id = "th", text = "ไทย" } }, { Size = UDim2.fromOffset(170, 30), AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -10, 0.5, 0) }, function(code)
+		if CFG.lang == code then return end
+		CFG.lang = code
+		saveCfg()
+		langSeg.set(code)
+		relang()
+		UI.refresh()
+	end)
+	langSeg.set(CFG.lang, false)
+
+	-- ธีม
+	local trow = rowFrame(g, o(), 50)
+	txtK(trow, "theme", { Size = UDim2.new(0.4, 0, 1, 0), Position = UDim2.fromOffset(14, 0), Font = FONTB })
+	JH.swatches = {}
+	function JH.paintSwatches()
+		for id, s in pairs(JH.swatches) do
+			tw(s, 0.2, { Transparency = (id == CFG.theme) and 0 or 1 })
+		end
 	end
-end
-local function setLang(code)
-	if CFG.lang == code then return end
-	CFG.lang = code
-	saveCfg()
-	paintLang()
-	relang()
-	UI.refresh()
-end
-JH.langBtns.en = btn(JH.langRow, "English", { Size = UDim2.fromOffset(86, 28), Position = UDim2.new(1, -184, 0.5, -14) }, function() setLang("en") end)
-JH.langBtns.th = btn(JH.langRow, "ไทย", { Size = UDim2.fromOffset(86, 28), Position = UDim2.new(1, -94, 0.5, -14) }, function() setLang("th") end)
-paintLang()
+	local function applyTheme(id)
+		CFG.theme = id
+		C.acc, C.acc2 = THEMES[id].acc, THEMES[id].acc2
+		saveCfg()
+		repaint()
+		JH.paintSwatches()
+		JH.refreshFiles()
+		UI.refresh()
+	end
+	for i, id in ipairs(THEME_ORDER) do
+		local b = new("TextButton", {
+			Size = UDim2.fromOffset(32, 32), AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -(12 + (#THEME_ORDER - i) * 40), 0.5, 0),
+			BackgroundColor3 = Color3.new(1, 1, 1), Text = "", AutoButtonColor = false, BorderSizePixel = 0,
+		}, trow)
+		corner(b, 16)
+		new("UIGradient", { Color = ColorSequence.new(THEMES[id].acc, THEMES[id].acc2), Rotation = 45 }, b)
+		JH.swatches[id] = stroke(b, Color3.new(1, 1, 1), 2.5, 1)
+		fx(b, 0.9)
+		b.MouseButton1Click:Connect(function() applyTheme(id) end)
+	end
+	JH.paintSwatches()
 
-numRow(JH.sScroll, so, "retry", "retry")
-numRow(JH.sScroll, so, "verify", "verifyTimeout")
-numRow(JH.sScroll, so, "money_timeout", "moneyTimeout")
-toggle(JH.sScroll, "use_delay", CFG.useDelay, { Size = UDim2.new(1, -6, 0, 38), LayoutOrder = so() }, function(v)
-	CFG.useDelay = v
-	saveCfg()
-end)
-txtK(JH.sScroll, "info_money", { Size = UDim2.new(1, -6, 0, 18), TextColor3 = C.sub, TextSize = 11, LayoutOrder = so() })
-txtK(JH.sScroll, "info_keys", { Size = UDim2.new(1, -6, 0, 18), TextColor3 = C.sub, TextSize = 11, LayoutOrder = so() })
+	-- ขนาด UI
+	local srow = rowFrame(g, o(), 40)
+	txtK(srow, "ui_scale", { Size = UDim2.new(1, -170, 1, 0), Position = UDim2.fromOffset(14, 0), Font = FONTB })
+	local sInp
+	local function setScale(n)
+		n = tonumber(n)
+		if n then
+			n = math.clamp(math.floor(n * 100 + 0.5) / 100, 0.5, 1.5)
+			CFG.uiScale = n
+			saveCfg()
+			tw(winScale, 0.2, { Scale = n })
+		end
+		sInp.Text = string.format("%g", CFG.uiScale or winScale.Scale)
+	end
+	btn(srow, "–", "ghost", { Size = UDim2.fromOffset(28, 28), Position = UDim2.new(1, -138, 0.5, -14), TextSize = 16 }, function() setScale(winScale.Scale - 0.05) end)
+	sInp = box(srow, string.format("%g", math.floor(winScale.Scale * 100 + 0.5) / 100), { Size = UDim2.fromOffset(64, 28), Position = UDim2.new(1, -106, 0.5, -14), TextXAlignment = CENTER }, function(t) setScale(t) end)
+	btn(srow, "+", "ghost", { Size = UDim2.fromOffset(28, 28), Position = UDim2.new(1, -38, 0.5, -14), TextSize = 16 }, function() setScale(winScale.Scale + 0.05) end)
 
-local conns = {}
-btnK(JH.sScroll, "destroy", { Size = UDim2.new(1, -6, 0, 34), BackgroundColor3 = C.bad, LayoutOrder = so() }, function()
-	stopMacro()
-	recording = false
-	for _, c in ipairs(conns) do pcall(function() c:Disconnect() end) end
-	gui:Destroy()
-end)
+	g, o = group(JH.sScroll, so(), "g_general", "🛠")
+	numRow(g, o(), "retry", "retry", 1, 0)
+	numRow(g, o(), "verify", "verifyTimeout", 0.5, 0.5)
+	numRow(g, o(), "money_timeout", "moneyTimeout", 5, 0)
+	switch(g, "use_delay", CFG.useDelay, { Size = UDim2.new(1, 0, 0, 40), LayoutOrder = o() }, function(v)
+		CFG.useDelay = v
+		saveCfg()
+	end, nil, "⏱")
+	txtK(JH.sScroll, "info_money", { Size = UDim2.new(1, -4, 0, 18), TextColor3 = C.dim, TextSize = 11, LayoutOrder = so() })
+	txtK(JH.sScroll, "info_keys", { Size = UDim2.new(1, -4, 0, 18), TextColor3 = C.dim, TextSize = 11, LayoutOrder = so() })
+	btnK(JH.sScroll, "destroy", "bad", { Size = UDim2.new(1, -4, 0, 38), LayoutOrder = so(), TextSize = 13 }, function()
+		stopMacro()
+		recording = false
+		for _, c in ipairs(conns) do pcall(function() c:Disconnect() end) end
+		gui:Destroy()
+	end)
+end
 
 --------------------------------------------------------------------------
 -- โปรไฟล์ผู้เล่นมุมซ้ายล่าง (ท่ากอดอก)
@@ -1829,20 +2151,21 @@ local POSE = {
 	Left  = { up = 25, yaw = 10, elbow = 65, twist = 78 },
 }
 
-JH.profile = new("Frame", { Size = UDim2.new(1, -14, 0, 176), Position = UDim2.new(0, 7, 1, -183), BackgroundColor3 = C.row, BorderSizePixel = 0 }, side)
-corner(JH.profile, 12)
-new("UIStroke", { Color = C.acc, Thickness = 1, Transparency = 0.65 }, JH.profile)
+JH.profile = new("Frame", { Size = UDim2.new(1, -14, 0, 176), Position = UDim2.new(0, 7, 1, -183), BackgroundColor3 = C.card, BorderSizePixel = 0 }, side)
+corner(JH.profile, 14)
+local pst = stroke(JH.profile, C.acc, 1.2, 0.55)
+paint(function() pst.Color = C.acc end)
 
-JH.avatarImg = new("ImageLabel", { Size = UDim2.new(1, -14, 0, 104), Position = UDim2.fromOffset(7, 7), BackgroundColor3 = C.bg, BorderSizePixel = 0, ScaleType = Enum.ScaleType.Crop }, JH.profile)
-corner(JH.avatarImg, 9)
+JH.avatarImg = new("ImageLabel", { Size = UDim2.new(1, -14, 0, 104), Position = UDim2.fromOffset(7, 7), BackgroundColor3 = C.panel, BorderSizePixel = 0, ScaleType = Enum.ScaleType.Crop }, JH.profile)
+corner(JH.avatarImg, 10)
 JH.vp = new("ViewportFrame", {
-	Size = UDim2.new(1, -14, 0, 104), Position = UDim2.fromOffset(7, 7), BackgroundColor3 = C.bg, BorderSizePixel = 0,
+	Size = UDim2.new(1, -14, 0, 104), Position = UDim2.fromOffset(7, 7), BackgroundColor3 = C.panel, BorderSizePixel = 0,
 	Ambient = Color3.fromRGB(175, 180, 200), LightColor = Color3.new(1, 1, 1), LightDirection = Vector3.new(-0.6, -0.8, 0.5), Visible = false,
 }, JH.profile)
-corner(JH.vp, 9)
-txt(JH.profile, LP.DisplayName, { Size = UDim2.new(1, -14, 0, 18), Position = UDim2.fromOffset(9, 114), Font = Enum.Font.GothamBold, TextSize = 13 })
+corner(JH.vp, 10)
+txt(JH.profile, LP.DisplayName, { Size = UDim2.new(1, -14, 0, 18), Position = UDim2.fromOffset(9, 114), Font = FONTB, TextSize = 13 })
 txt(JH.profile, "@" .. LP.Name, { Size = UDim2.new(1, -14, 0, 14), Position = UDim2.fromOffset(9, 132), TextSize = 11, TextColor3 = C.sub })
-JH.profMoney = txt(JH.profile, "$ --", { Size = UDim2.new(1, -14, 0, 16), Position = UDim2.fromOffset(9, 150), TextSize = 12, Font = Enum.Font.GothamBold, TextColor3 = C.ok })
+JH.profMoney = txt(JH.profile, "$ --", { Size = UDim2.new(1, -14, 0, 16), Position = UDim2.fromOffset(9, 150), TextSize = 12, Font = FONTB, TextColor3 = C.ok })
 
 task.spawn(function()
 	local ok, url = pcall(function()
@@ -1851,7 +2174,7 @@ task.spawn(function()
 	if ok and url then JH.avatarImg.Image = url end
 end)
 
-local vpModel, vpT = nil, 0
+local vpModel
 local function armPose(clone, side, p)
 	local sgn = (side == "Right") and 1 or -1
 	local up = clone:FindFirstChild(side .. "UpperArm")
@@ -1911,11 +2234,11 @@ table.insert(conns, LP.CharacterAdded:Connect(function()
 end))
 
 --------------------------------------------------------------------------
--- Drag / เปิด-ปิดเมนูแบบมีอนิเมชั่น
+-- Drag / เปิด-ปิด / ย่อหน้าต่าง
 --------------------------------------------------------------------------
 do
 	local dragging, startPos, startMouse
-	table.insert(conns, title.InputBegan:Connect(function(i)
+	table.insert(conns, header.InputBegan:Connect(function(i)
 		if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
 			dragging, startPos, startMouse = true, win.Position, i.Position
 		end
@@ -1931,30 +2254,40 @@ do
 	end))
 end
 
-local isOpen, busy = true, false
+local isOpen, busy, collapsed = true, false, false
 local function setOpen(v)
 	if busy or v == isOpen then return end
 	busy = true
 	isOpen = v
+	local s = winScale.Scale
 	if v then
 		win.Visible = true
-		winScale.Scale = 0.9
-		tw(winScale, 0.28, { Scale = 1 }, BACK)
+		winScale.Scale = s * 0.9
+		tw(winScale, 0.28, { Scale = s }, BACK)
 		task.delay(0.3, function() busy = false end)
 	else
-		tw(winScale, 0.16, { Scale = 0.9 })
-		task.delay(0.17, function() win.Visible = false busy = false end)
+		tw(winScale, 0.16, { Scale = s * 0.9 })
+		task.delay(0.17, function() win.Visible = false winScale.Scale = s busy = false end)
 	end
 end
+closeB.MouseButton1Click:Connect(function() setOpen(false) end)
+miniB.MouseButton1Click:Connect(function()
+	collapsed = not collapsed
+	miniB.Text = collapsed and "▢" or "–"
+	tw(win, 0.28, { Size = UDim2.fromOffset(W, collapsed and HEAD or H) }, QUINT)
+end)
 
+do
 local fab = new("TextButton", {
-	Size = UDim2.fromOffset(46, 46), Position = UDim2.new(0, 8, 0.5, -23), BackgroundColor3 = C.side, Text = "J",
-	TextColor3 = C.acc, Font = Enum.Font.GothamBlack, TextSize = 22, BorderSizePixel = 0, AutoButtonColor = false,
+	Size = UDim2.fromOffset(50, 50), Position = UDim2.new(0, 10, 0.5, -25), BackgroundColor3 = Color3.new(1, 1, 1), Text = "J",
+	TextColor3 = C.ink, Font = FONTK, TextSize = 24, BorderSizePixel = 0, AutoButtonColor = false,
 }, gui)
-corner(fab, 23)
-new("UIStroke", { Thickness = 1.5, Color = C.acc }, fab)
-hoverable(fab, true)
+corner(fab, 25)
+stroke(fab, Color3.new(1, 1, 1), 2, 0.2)
+JH.fabGrad = accGrad(fab, 45)
+fx(fab, 0.9)
 fab.MouseButton1Click:Connect(function() setOpen(not isOpen) end)
+end
 table.insert(conns, UIS.InputBegan:Connect(function(i, gp)
 	if not gp and i.KeyCode == Enum.KeyCode.RightControl then setOpen(not isOpen) end
 end))
@@ -2007,20 +2340,22 @@ local function updateCard()
 	end
 	JH.cStateLbl.Text = stText
 	JH.cStateLbl.TextColor3 = stCol
+	tw(JH.chip, 0.2, { BackgroundColor3 = stCol })
 	tw(JH.dot, 0.2, { BackgroundColor3 = stCol })
+	JH.ring.BackgroundColor3 = stCol
 	JH.cCountLbl.Text = (n > 0 and not recording) and (math.min(math.max(curIdx, 1), n) .. " / " .. n) or ""
 	JH.cL1.Text, JH.cL2.Text, JH.cL3.Text = l1, l2, l3
 	tw(JH.barFill, 0.3, { Size = UDim2.new(math.clamp(frac, 0, 1), 0, 1, 0) })
 	if cardState ~= stText then
 		cardState = stText
-		JH.cardStroke.Transparency = 0.1
+		JH.cardStroke.Transparency = 0.05
 		tw(JH.cardStroke, 0.6, { Transparency = 0.6 })
 	end
 	-- ไฮไลท์สเต็ปที่กำลังทำในแท็บ Steps
-	for i, r in pairs(stepRows) do
+	for i, r in pairs(JH.stepRows) do
 		if r.Parent then
 			local on = running and i == curIdx
-			local target = on and C.sel or C.row
+			local target = on and C.sel or C.card
 			if r.BackgroundColor3 ~= target then tw(r, 0.2, { BackgroundColor3 = target }) end
 		end
 	end
@@ -2029,11 +2364,23 @@ end
 --------------------------------------------------------------------------
 -- ลูปหลัก
 --------------------------------------------------------------------------
-local rot, acc, breathe = 0, 0, 0
+do
+local rot, acc, breathe, pulse = 0, 0, 0, 0
 table.insert(conns, RunService.Heartbeat:Connect(function(dt)
 	rot = (rot + dt * 60) % 360
 	JH.grad.Rotation = rot
 	JH.logoGrad.Rotation = rot
+	JH.fabGrad.Rotation = rot
+	JH.barGrad.Offset = Vector2.new(math.sin(os.clock() * 1.5) * 0.35, 0)
+	if win.Visible then
+		pulse = (pulse + dt * 1.2) % 1
+		if running or recording then
+			JH.ring.Size = UDim2.fromOffset(8 + 16 * pulse, 8 + 16 * pulse)
+			JH.ring.BackgroundTransparency = 0.35 + 0.65 * pulse
+		else
+			JH.ring.BackgroundTransparency = 1
+		end
+	end
 	acc = acc + dt
 	if acc >= 0.25 then
 		acc = 0
@@ -2047,8 +2394,10 @@ table.insert(conns, RunService.Heartbeat:Connect(function(dt)
 		vpModel:PivotTo(CFrame.new(0, math.sin(breathe * 1.6) * 0.04, 0) * CFrame.Angles(0, math.rad(-22 + math.sin(breathe * 0.9) * 9), 0))
 	end
 end))
+end
 
 -- ฟีเจอร์ Game วนตามเวลา
+do
 local last = {}
 local function due(k, iv)
 	local n = os.clock()
@@ -2068,6 +2417,7 @@ task.spawn(function()
 		task.wait()
 	end
 end)
+end
 
 --------------------------------------------------------------------------
 -- เริ่มต้น + คืนค่าที่จำไว้
@@ -2076,7 +2426,7 @@ CFG.tab = math.clamp(tonumber(CFG.tab) or 1, 1, #tabs)
 showTab(CFG.tab, false)
 
 ensureDir()
-refreshFiles()
+JH.refreshFiles()
 if CFG.selected then loadMacro(CFG.selected) end
 refreshAll()
 status(hookOK and "ready" or "ready_nohook")
@@ -2086,10 +2436,10 @@ if flags.play then
 	task.defer(function()
 		task.wait(1)
 		if #steps > 0 and not running and not recording then
-			playSet(true, true)
-			if not runMacro(1) then playSet(false, true) flags.play = false saveCfg() end
+			JH.playSet(true, true)
+			if not runMacro(1) then JH.playSet(false, true) flags.play = false saveCfg() end
 		else
-			playSet(false, true)
+			JH.playSet(false, true)
 			flags.play = false
 			saveCfg()
 		end
@@ -2097,5 +2447,8 @@ if flags.play then
 end
 
 -- เปิดเมนูด้วยอนิเมชั่น
-winScale.Scale = 0.9
-tw(winScale, 0.35, { Scale = 1 }, BACK)
+do
+	local s = winScale.Scale
+	winScale.Scale = s * 0.9
+	tw(winScale, 0.35, { Scale = s }, BACK)
+end
