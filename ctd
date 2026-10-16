@@ -70,6 +70,7 @@ local function saveCfg()
 end
 loadCfg()
 local flags = CFG.flags
+local JH = {}
 
 --------------------------------------------------------------------------
 -- ภาษา (ทุกข้อความใน UI ผ่านตัวนี้ ไม่ปนภาษา)
@@ -1258,16 +1259,16 @@ local win = new("Frame", { Size = UDim2.fromOffset(W, H), Position = UDim2.fromO
 corner(win, 16)
 local winScale = new("UIScale", { Scale = 1 }, win)
 
-local stroke = new("UIStroke", { Thickness = 1.6, Color = Color3.new(1, 1, 1) }, win)
-local grad = new("UIGradient", { Color = ColorSequence.new({
+JH.stroke = new("UIStroke", { Thickness = 1.6, Color = Color3.new(1, 1, 1) }, win)
+JH.grad = new("UIGradient", { Color = ColorSequence.new({
 	ColorSequenceKeypoint.new(0, C.acc), ColorSequenceKeypoint.new(0.5, C.acc2), ColorSequenceKeypoint.new(1, C.acc),
-}) }, stroke)
+}) }, JH.stroke)
 
 local title = new("Frame", { Size = UDim2.new(1, 0, 0, TITLE), BackgroundColor3 = C.side, BorderSizePixel = 0 }, win)
-local logo = txt(title, "JET", { Size = UDim2.fromOffset(50, TITLE), Position = UDim2.fromOffset(14, 0), Font = Enum.Font.GothamBlack, TextSize = 22 })
-local logoGrad = new("UIGradient", { Color = ColorSequence.new(C.acc, C.acc2) }, logo)
+JH.logo = txt(title, "JET", { Size = UDim2.fromOffset(50, TITLE), Position = UDim2.fromOffset(14, 0), Font = Enum.Font.GothamBlack, TextSize = 22 })
+JH.logoGrad = new("UIGradient", { Color = ColorSequence.new(C.acc, C.acc2) }, JH.logo)
 txt(title, "HUB _ Camera", { Size = UDim2.new(0.5, 0, 1, 0), Position = UDim2.fromOffset(64, 0), Font = Enum.Font.GothamBold, TextSize = 13, TextColor3 = C.sub })
-local moneyLbl = txt(title, "$ --", { Size = UDim2.new(0.4, -14, 1, 0), Position = UDim2.new(0.6, 0, 0, 0), TextXAlignment = Enum.TextXAlignment.Right, Font = Enum.Font.GothamBold, TextColor3 = C.ok })
+JH.moneyLbl = txt(title, "$ --", { Size = UDim2.new(0.4, -14, 1, 0), Position = UDim2.new(0.6, 0, 0, 0), TextXAlignment = Enum.TextXAlignment.Right, Font = Enum.Font.GothamBold, TextColor3 = C.ok })
 
 local side = new("Frame", { Size = UDim2.new(0, SIDE, 1, -(TITLE + FOOT)), Position = UDim2.fromOffset(0, TITLE), BackgroundColor3 = C.side, BorderSizePixel = 0 }, win)
 local content = new("Frame", { Size = UDim2.new(1, -SIDE, 1, -(TITLE + FOOT)), Position = UDim2.fromOffset(SIDE, TITLE), BackgroundTransparency = 1 }, win)
@@ -1277,10 +1278,10 @@ statusLbl = txt(foot, T("ready"), { Size = UDim2.new(1, -20, 1, 0), Position = U
 -- Tabs ----------------------------------------------------------------
 local TAB_H, TAB_Y0 = 36, 10
 local tabs = {}
-local indicator = new("Frame", { Size = UDim2.new(1, -14, 0, TAB_H), Position = UDim2.fromOffset(7, TAB_Y0), BackgroundColor3 = C.sel, BorderSizePixel = 0 }, side)
-corner(indicator, 9)
-local indBar = new("Frame", { Size = UDim2.new(0, 3, 0.55, 0), Position = UDim2.new(0, 3, 0.225, 0), BackgroundColor3 = C.acc, BorderSizePixel = 0 }, indicator)
-corner(indBar, 2)
+JH.indicator = new("Frame", { Size = UDim2.new(1, -14, 0, TAB_H), Position = UDim2.fromOffset(7, TAB_Y0), BackgroundColor3 = C.sel, BorderSizePixel = 0 }, side)
+corner(JH.indicator, 9)
+JH.indBar = new("Frame", { Size = UDim2.new(0, 3, 0.55, 0), Position = UDim2.new(0, 3, 0.225, 0), BackgroundColor3 = C.acc, BorderSizePixel = 0 }, JH.indicator)
+corner(JH.indBar, 2)
 
 local function showTab(i, animate)
 	for j, t in ipairs(tabs) do
@@ -1294,11 +1295,11 @@ local function showTab(i, animate)
 		cur.page.GroupTransparency = 1
 		cur.page.Position = UDim2.fromOffset(0, 14)
 		tw(cur.page, 0.3, { GroupTransparency = 0, Position = UDim2.fromOffset(0, 0) }, QUINT)
-		tw(indicator, 0.3, { Position = UDim2.fromOffset(7, y) }, QUINT)
+		tw(JH.indicator, 0.3, { Position = UDim2.fromOffset(7, y) }, QUINT)
 	else
 		cur.page.GroupTransparency = 0
 		cur.page.Position = UDim2.fromOffset(0, 0)
-		indicator.Position = UDim2.fromOffset(7, y)
+		JH.indicator.Position = UDim2.fromOffset(7, y)
 	end
 	CFG.tab = i
 end
@@ -1352,21 +1353,21 @@ end
 --------------------------------------------------------------------------
 -- PAGE: Game
 --------------------------------------------------------------------------
-local pGame = newPage("tab_game")
-local gScroll = scrollList(pGame)
+JH.pGame = newPage("tab_game")
+JH.gScroll = scrollList(JH.pGame)
 local go = counter()
 
-txtK(gScroll, "vote_hdr", { Size = UDim2.new(1, -6, 0, 18), TextColor3 = C.sub, TextSize = 12, LayoutOrder = go() })
-local modeBar = hbar(gScroll, { Size = UDim2.new(1, -6, 0, 32), LayoutOrder = go() })
-local modeBtns = {}
+txtK(JH.gScroll, "vote_hdr", { Size = UDim2.new(1, -6, 0, 18), TextColor3 = C.sub, TextSize = 12, LayoutOrder = go() })
+JH.modeBar = hbar(JH.gScroll, { Size = UDim2.new(1, -6, 0, 32), LayoutOrder = go() })
+JH.modeBtns = {}
 local function paintModes()
-	for m, b in pairs(modeBtns) do
+	for m, b in pairs(JH.modeBtns) do
 		local on = (m == CFG.voteMode)
 		setBtn(b, on and C.acc or C.sel, on and C.bg or C.text)
 	end
 end
 for _, m in ipairs({ "Easy", "Normal", "Hard", "Insane" }) do
-	modeBtns[m] = btnK(modeBar, "mode_" .. m, { Size = UDim2.new(0.25, -4, 1, 0) }, function()
+	JH.modeBtns[m] = btnK(JH.modeBar, "mode_" .. m, { Size = UDim2.new(0.25, -4, 1, 0) }, function()
 		CFG.voteMode = m
 		saveCfg()
 		paintModes()
@@ -1374,20 +1375,20 @@ for _, m in ipairs({ "Easy", "Normal", "Hard", "Insane" }) do
 	end)
 end
 paintModes()
-toggle(gScroll, "auto_vote", flags.vote, { Size = UDim2.new(1, -6, 0, 46), LayoutOrder = go() }, function(v) flags.vote = v saveCfg() end, "auto_vote_d")
-numRow(gScroll, go, "vote_every", "voteInterval")
+toggle(JH.gScroll, "auto_vote", flags.vote, { Size = UDim2.new(1, -6, 0, 46), LayoutOrder = go() }, function(v) flags.vote = v saveCfg() end, "auto_vote_d")
+numRow(JH.gScroll, go, "vote_every", "voteInterval")
 
-txtK(gScroll, "speed_hdr", { Size = UDim2.new(1, -6, 0, 18), TextColor3 = C.sub, TextSize = 12, LayoutOrder = go() })
-local speedBar = hbar(gScroll, { Size = UDim2.new(1, -6, 0, 32), LayoutOrder = go() })
-local speedBtns = {}
+txtK(JH.gScroll, "speed_hdr", { Size = UDim2.new(1, -6, 0, 18), TextColor3 = C.sub, TextSize = 12, LayoutOrder = go() })
+JH.speedBar = hbar(JH.gScroll, { Size = UDim2.new(1, -6, 0, 32), LayoutOrder = go() })
+JH.speedBtns = {}
 local function paintSpeed()
-	for s, b in pairs(speedBtns) do
+	for s, b in pairs(JH.speedBtns) do
 		local on = (s == CFG.speed)
 		setBtn(b, on and C.acc or C.sel, on and C.bg or C.text)
 	end
 end
 for _, s in ipairs({ 1, 1.5, 2 }) do
-	speedBtns[s] = btn(speedBar, "x" .. s, { Size = UDim2.new(1 / 3, -4, 1, 0) }, function()
+	JH.speedBtns[s] = btn(JH.speedBar, "x" .. s, { Size = UDim2.new(1 / 3, -4, 1, 0) }, function()
 		CFG.speed = s
 		saveCfg()
 		paintSpeed()
@@ -1395,43 +1396,42 @@ for _, s in ipairs({ 1, 1.5, 2 }) do
 	end)
 end
 paintSpeed()
-toggle(gScroll, "auto_speed", flags.speed, { Size = UDim2.new(1, -6, 0, 46), LayoutOrder = go() }, function(v) flags.speed = v saveCfg() end, "auto_speed_d")
-numRow(gScroll, go, "speed_every", "speedInterval")
+toggle(JH.gScroll, "auto_speed", flags.speed, { Size = UDim2.new(1, -6, 0, 46), LayoutOrder = go() }, function(v) flags.speed = v saveCfg() end, "auto_speed_d")
+numRow(JH.gScroll, go, "speed_every", "speedInterval")
 
-toggle(gScroll, "auto_skip", flags.skip, { Size = UDim2.new(1, -6, 0, 46), LayoutOrder = go() }, function(v) flags.skip = v saveCfg() end, "auto_skip_d")
-numRow(gScroll, go, "skip_every", "skipInterval")
+toggle(JH.gScroll, "auto_skip", flags.skip, { Size = UDim2.new(1, -6, 0, 46), LayoutOrder = go() }, function(v) flags.skip = v saveCfg() end, "auto_skip_d")
+numRow(JH.gScroll, go, "skip_every", "skipInterval")
 
-toggle(gScroll, "auto_again", flags.again, { Size = UDim2.new(1, -6, 0, 46), LayoutOrder = go() }, function(v) flags.again = v saveCfg() end, "auto_again_d")
-numRow(gScroll, go, "again_every", "againInterval")
+toggle(JH.gScroll, "auto_again", flags.again, { Size = UDim2.new(1, -6, 0, 46), LayoutOrder = go() }, function(v) flags.again = v saveCfg() end, "auto_again_d")
+numRow(JH.gScroll, go, "again_every", "againInterval")
 
-txtK(gScroll, "remember_note", { Size = UDim2.new(1, -6, 0, 20), TextColor3 = C.sub, TextSize = 11, LayoutOrder = go() })
+txtK(JH.gScroll, "remember_note", { Size = UDim2.new(1, -6, 0, 20), TextColor3 = C.sub, TextSize = 11, LayoutOrder = go() })
 
 --------------------------------------------------------------------------
 -- PAGE: Macro (การ์ดสถานะ + ปุ่มอัด/เล่น)
 --------------------------------------------------------------------------
-local pMacro = newPage("tab_macro")
-local mScroll = scrollList(pMacro)
+JH.pMacro = newPage("tab_macro")
+JH.mScroll = scrollList(JH.pMacro)
 local mo = counter()
 
-local card = new("Frame", { Size = UDim2.new(1, -6, 0, 112), BackgroundColor3 = C.row, BorderSizePixel = 0, LayoutOrder = mo() }, mScroll)
-corner(card, 12)
-local cardStroke = new("UIStroke", { Color = C.acc, Thickness = 1.2, Transparency = 0.6 }, card)
-local dot = new("Frame", { Size = UDim2.fromOffset(9, 9), Position = UDim2.fromOffset(14, 13), BackgroundColor3 = C.sub, BorderSizePixel = 0 }, card)
-corner(dot, 5)
-local cStateLbl = txt(card, "", { Size = UDim2.new(0.6, 0, 0, 18), Position = UDim2.fromOffset(30, 8), Font = Enum.Font.GothamBold, TextSize = 12, TextColor3 = C.sub })
-local cCountLbl = txt(card, "", { Size = UDim2.new(0.4, -14, 0, 18), Position = UDim2.new(0.6, 0, 0, 8), TextXAlignment = Enum.TextXAlignment.Right, TextSize = 12, TextColor3 = C.sub })
-local cL1 = txt(card, "", { Size = UDim2.new(1, -28, 0, 22), Position = UDim2.fromOffset(14, 28), Font = Enum.Font.GothamBold, TextSize = 14 })
-local cL2 = txt(card, "", { Size = UDim2.new(1, -28, 0, 16), Position = UDim2.fromOffset(14, 52), TextSize = 12, TextColor3 = C.sub })
-local cL3 = txt(card, "", { Size = UDim2.new(1, -28, 0, 16), Position = UDim2.fromOffset(14, 70), TextSize = 12, TextColor3 = C.sub })
-local barBg = new("Frame", { Size = UDim2.new(1, -28, 0, 6), Position = UDim2.fromOffset(14, 94), BackgroundColor3 = C.bg, BorderSizePixel = 0 }, card)
-corner(barBg, 3)
-local barFill = new("Frame", { Size = UDim2.new(0, 0, 1, 0), BackgroundColor3 = Color3.new(1, 1, 1), BorderSizePixel = 0 }, barBg)
-corner(barFill, 3)
-new("UIGradient", { Color = ColorSequence.new(C.acc, C.acc2) }, barFill)
+JH.card = new("Frame", { Size = UDim2.new(1, -6, 0, 112), BackgroundColor3 = C.row, BorderSizePixel = 0, LayoutOrder = mo() }, JH.mScroll)
+corner(JH.card, 12)
+JH.cardStroke = new("UIStroke", { Color = C.acc, Thickness = 1.2, Transparency = 0.6 }, JH.card)
+JH.dot = new("Frame", { Size = UDim2.fromOffset(9, 9), Position = UDim2.fromOffset(14, 13), BackgroundColor3 = C.sub, BorderSizePixel = 0 }, JH.card)
+corner(JH.dot, 5)
+JH.cStateLbl = txt(JH.card, "", { Size = UDim2.new(0.6, 0, 0, 18), Position = UDim2.fromOffset(30, 8), Font = Enum.Font.GothamBold, TextSize = 12, TextColor3 = C.sub })
+JH.cCountLbl = txt(JH.card, "", { Size = UDim2.new(0.4, -14, 0, 18), Position = UDim2.new(0.6, 0, 0, 8), TextXAlignment = Enum.TextXAlignment.Right, TextSize = 12, TextColor3 = C.sub })
+JH.cL1 = txt(JH.card, "", { Size = UDim2.new(1, -28, 0, 22), Position = UDim2.fromOffset(14, 28), Font = Enum.Font.GothamBold, TextSize = 14 })
+JH.cL2 = txt(JH.card, "", { Size = UDim2.new(1, -28, 0, 16), Position = UDim2.fromOffset(14, 52), TextSize = 12, TextColor3 = C.sub })
+JH.cL3 = txt(JH.card, "", { Size = UDim2.new(1, -28, 0, 16), Position = UDim2.fromOffset(14, 70), TextSize = 12, TextColor3 = C.sub })
+JH.barBg = new("Frame", { Size = UDim2.new(1, -28, 0, 6), Position = UDim2.fromOffset(14, 94), BackgroundColor3 = C.bg, BorderSizePixel = 0 }, JH.card)
+corner(JH.barBg, 3)
+JH.barFill = new("Frame", { Size = UDim2.new(0, 0, 1, 0), BackgroundColor3 = Color3.new(1, 1, 1), BorderSizePixel = 0 }, JH.barBg)
+corner(JH.barFill, 3)
+new("UIGradient", { Color = ColorSequence.new(C.acc, C.acc2) }, JH.barFill)
 
-local nameBox
 local recSet, playSet, loopSet
-recSet = toggle(mScroll, "record", false, { Size = UDim2.new(1, -6, 0, 46), LayoutOrder = mo() }, function(v)
+recSet = toggle(JH.mScroll, "record", false, { Size = UDim2.new(1, -6, 0, 46), LayoutOrder = mo() }, function(v)
 	if v then
 		if running then status("stop_first") recSet(false, true) return end
 		if not hookOK then status("no_hook") recSet(false, true) return end
@@ -1445,13 +1445,13 @@ recSet = toggle(mScroll, "record", false, { Size = UDim2.new(1, -6, 0, 46), Layo
 		recording = false
 		UI.refresh()
 		status("rec_stopped", #steps)
-		local nm = cleanName(nameBox.Text)
+		local nm = cleanName(JH.nameBox.Text)
 		if nm ~= "" then CFG.selected = nm saveCfg() end
 		autoSave()
 	end
 end, "record_d")
 
-playSet = toggle(mScroll, "play", flags.play, { Size = UDim2.new(1, -6, 0, 46), LayoutOrder = mo() }, function(v)
+playSet = toggle(JH.mScroll, "play", flags.play, { Size = UDim2.new(1, -6, 0, 46), LayoutOrder = mo() }, function(v)
 	flags.play = v
 	saveCfg()
 	if v then
@@ -1464,44 +1464,43 @@ playSet = toggle(mScroll, "play", flags.play, { Size = UDim2.new(1, -6, 0, 46), 
 end, "play_d")
 UI.playOff = function() playSet(false, true) end
 
-loopSet = toggle(mScroll, "loop", flags.loop, { Size = UDim2.new(1, -6, 0, 46), LayoutOrder = mo() }, function(v)
+loopSet = toggle(JH.mScroll, "loop", flags.loop, { Size = UDim2.new(1, -6, 0, 46), LayoutOrder = mo() }, function(v)
 	flags.loop = v
 	saveCfg()
 end, "loop_d")
 
-local nameRow = new("Frame", { Size = UDim2.new(1, -6, 0, 36), BackgroundColor3 = C.row, BorderSizePixel = 0, LayoutOrder = mo() }, mScroll)
-corner(nameRow, 10)
-txtK(nameRow, "macro_name", { Size = UDim2.new(0.4, -10, 1, 0), Position = UDim2.fromOffset(14, 0) })
-nameBox = box(nameRow, CFG.selected or "Macro1", { Size = UDim2.new(0.6, -18, 0, 26), Position = UDim2.new(0.4, 4, 0.5, -13), TextXAlignment = Enum.TextXAlignment.Center })
+JH.nameRow = new("Frame", { Size = UDim2.new(1, -6, 0, 36), BackgroundColor3 = C.row, BorderSizePixel = 0, LayoutOrder = mo() }, JH.mScroll)
+corner(JH.nameRow, 10)
+txtK(JH.nameRow, "macro_name", { Size = UDim2.new(0.4, -10, 1, 0), Position = UDim2.fromOffset(14, 0) })
+JH.nameBox = box(JH.nameRow, CFG.selected or "Macro1", { Size = UDim2.new(0.6, -18, 0, 26), Position = UDim2.new(0.4, 4, 0.5, -13), TextXAlignment = Enum.TextXAlignment.Center })
 
-local fileList
 local selFile = CFG.selected
 local function refreshFiles()
-	for _, ch in ipairs(fileList:GetChildren()) do
+	for _, ch in ipairs(JH.fileList:GetChildren()) do
 		if ch:IsA("TextButton") then ch:Destroy() end
 	end
 	for _, n in ipairs(listMacros()) do
 		local on = (n == selFile)
-		local b = btn(fileList, n, { Size = UDim2.new(1, -6, 0, 28), BackgroundColor3 = on and C.acc or C.row, TextColor3 = on and C.bg or C.text, TextXAlignment = Enum.TextXAlignment.Left }, nil, true)
+		local b = btn(JH.fileList, n, { Size = UDim2.new(1, -6, 0, 28), BackgroundColor3 = on and C.acc or C.row, TextColor3 = on and C.bg or C.text, TextXAlignment = Enum.TextXAlignment.Left }, nil, true)
 		hoverable(b, false)
 		new("UIPadding", { PaddingLeft = UDim.new(0, 10) }, b)
 		b.MouseButton1Click:Connect(function()
 			if running or recording then status("stop_first") return end
 			selFile = n
-			nameBox.Text = n
+			JH.nameBox.Text = n
 			loadMacro(n)
 			refreshFiles()
 		end)
 	end
 end
 
-local btnRow = hbar(mScroll, { Size = UDim2.new(1, -6, 0, 32), LayoutOrder = mo() })
-btnK(btnRow, "save", { Size = UDim2.new(0.34, -4, 1, 0), BackgroundColor3 = C.ok, TextColor3 = C.bg }, function()
+JH.btnRow = hbar(JH.mScroll, { Size = UDim2.new(1, -6, 0, 32), LayoutOrder = mo() })
+btnK(JH.btnRow, "save", { Size = UDim2.new(0.34, -4, 1, 0), BackgroundColor3 = C.ok, TextColor3 = C.bg }, function()
 	if recording then status("close_rec") return end
-	if saveMacro(nameBox.Text) then selFile = cleanName(nameBox.Text) refreshFiles() end
+	if saveMacro(JH.nameBox.Text) then selFile = cleanName(JH.nameBox.Text) refreshFiles() end
 end)
-btnK(btnRow, "refresh", { Size = UDim2.new(0.33, -4, 1, 0) }, function() refreshFiles() end)
-btnK(btnRow, "delete", { Size = UDim2.new(0.33, -4, 1, 0), BackgroundColor3 = C.bad }, function()
+btnK(JH.btnRow, "refresh", { Size = UDim2.new(0.33, -4, 1, 0) }, function() refreshFiles() end)
+btnK(JH.btnRow, "delete", { Size = UDim2.new(0.33, -4, 1, 0), BackgroundColor3 = C.bad }, function()
 	if not selFile then status("pick_file") return end
 	if delfile then pcall(delfile, filePath(selFile)) end
 	if CFG.selected == selFile then CFG.selected = nil saveCfg() end
@@ -1510,17 +1509,16 @@ btnK(btnRow, "delete", { Size = UDim2.new(0.33, -4, 1, 0), BackgroundColor3 = C.
 	refreshFiles()
 end)
 
-local shareRow = hbar(mScroll, { Size = UDim2.new(1, -6, 0, 32), LayoutOrder = mo() })
-btnK(shareRow, "share", { Size = UDim2.new(0.5, -3, 1, 0), BackgroundColor3 = C.acc, TextColor3 = C.bg }, function()
+JH.shareRow = hbar(JH.mScroll, { Size = UDim2.new(1, -6, 0, 32), LayoutOrder = mo() })
+btnK(JH.shareRow, "share", { Size = UDim2.new(0.5, -3, 1, 0), BackgroundColor3 = C.acc, TextColor3 = C.bg }, function()
 	if not selFile then status("pick_file") return end
 	local code = makeShareCode(selFile)
 	if not code then status("share_fail") return end
 	if setClip(code) then status("share_ok", selFile) else status("no_clip") end
 end)
-local importBox
-btnK(shareRow, "import_btn", { Size = UDim2.new(0.5, -3, 1, 0), BackgroundColor3 = C.acc2, TextColor3 = C.bg }, function()
+btnK(JH.shareRow, "import_btn", { Size = UDim2.new(0.5, -3, 1, 0), BackgroundColor3 = C.acc2, TextColor3 = C.bg }, function()
 	if running or recording then status("stop_first") return end
-	local code = importBox.Text
+	local code = JH.importBox.Text
 	if code:gsub("%s", "") == "" then code = getClip() or "" end
 	local name, n = importCode(code)
 	if not name then
@@ -1529,62 +1527,62 @@ btnK(shareRow, "import_btn", { Size = UDim2.new(0.5, -3, 1, 0), BackgroundColor3
 		else status("import_bad") end
 		return
 	end
-	importBox.Text = ""
+	JH.importBox.Text = ""
 	selFile = name
-	nameBox.Text = name
+	JH.nameBox.Text = name
 	loadMacro(name)
 	refreshFiles()
 	status("import_ok", name, n)
 end)
-importBox = box(mScroll, "", { Size = UDim2.new(1, -6, 0, 30), LayoutOrder = mo(), TextXAlignment = Enum.TextXAlignment.Left, ClearTextOnFocus = false, TextTruncate = Enum.TextTruncate.AtEnd })
-bind(importBox, "PlaceholderText", "import_ph")
+JH.importBox = box(JH.mScroll, "", { Size = UDim2.new(1, -6, 0, 30), LayoutOrder = mo(), TextXAlignment = Enum.TextXAlignment.Left, ClearTextOnFocus = false, TextTruncate = Enum.TextTruncate.AtEnd })
+bind(JH.importBox, "PlaceholderText", "import_ph")
 
-txtK(mScroll, "saved_macros", { Size = UDim2.new(1, -6, 0, 18), TextColor3 = C.sub, TextSize = 12, LayoutOrder = mo() })
-fileList = new("ScrollingFrame", {
+txtK(JH.mScroll, "saved_macros", { Size = UDim2.new(1, -6, 0, 18), TextColor3 = C.sub, TextSize = 12, LayoutOrder = mo() })
+JH.fileList = new("ScrollingFrame", {
 	Size = UDim2.new(1, -6, 0, 130), BackgroundColor3 = C.side, BorderSizePixel = 0, ScrollBarThickness = 3,
 	AutomaticCanvasSize = Enum.AutomaticSize.Y, CanvasSize = UDim2.new(), LayoutOrder = mo(),
-}, mScroll)
-corner(fileList, 10)
-new("UIListLayout", { Padding = UDim.new(0, 3) }, fileList)
-new("UIPadding", { PaddingTop = UDim.new(0, 4), PaddingLeft = UDim.new(0, 4), PaddingRight = UDim.new(0, 4) }, fileList)
+}, JH.mScroll)
+corner(JH.fileList, 10)
+new("UIListLayout", { Padding = UDim.new(0, 3) }, JH.fileList)
+new("UIPadding", { PaddingTop = UDim.new(0, 4), PaddingLeft = UDim.new(0, 4), PaddingRight = UDim.new(0, 4) }, JH.fileList)
 
 --------------------------------------------------------------------------
 -- PAGE: Prices (เลือกยูนิต -> Select -> แก้ราคาตามขั้น)
 --------------------------------------------------------------------------
-local pPrices = newPage("tab_prices")
+JH.pPrices = newPage("tab_prices")
 local selUnit, pendingUnit = nil, nil
 
-local pBar = hbar(pPrices, { Size = UDim2.new(1, -12, 0, 36), Position = UDim2.fromOffset(6, 6) })
-toggle(pBar, "lock_all", CFG.priceLockAll, { Size = UDim2.new(0.5, -3, 1, 0) }, function(v)
+JH.pBar = hbar(JH.pPrices, { Size = UDim2.new(1, -12, 0, 36), Position = UDim2.fromOffset(6, 6) })
+toggle(JH.pBar, "lock_all", CFG.priceLockAll, { Size = UDim2.new(0.5, -3, 1, 0) }, function(v)
 	CFG.priceLockAll = v
 	saveCfg()
 	UI.refresh()
 end)
-toggle(pBar, "auto_learn", CFG.autoLearn, { Size = UDim2.new(0.5, -3, 1, 0) }, function(v)
+toggle(JH.pBar, "auto_learn", CFG.autoLearn, { Size = UDim2.new(0.5, -3, 1, 0) }, function(v)
 	CFG.autoLearn = v
 	saveCfg()
 end)
 
-txtK(pPrices, "units_hdr", { Size = UDim2.new(1, -12, 0, 16), Position = UDim2.fromOffset(8, 48), TextColor3 = C.sub, TextSize = 11 })
-local chipBar = new("ScrollingFrame", {
+txtK(JH.pPrices, "units_hdr", { Size = UDim2.new(1, -12, 0, 16), Position = UDim2.fromOffset(8, 48), TextColor3 = C.sub, TextSize = 11 })
+JH.chipBar = new("ScrollingFrame", {
 	Size = UDim2.new(1, -104, 0, 36), Position = UDim2.fromOffset(6, 66), BackgroundColor3 = C.side, BorderSizePixel = 0,
 	ScrollBarThickness = 0, ScrollingDirection = Enum.ScrollingDirection.X, AutomaticCanvasSize = Enum.AutomaticSize.X, CanvasSize = UDim2.new(),
-}, pPrices)
-corner(chipBar, 10)
-new("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal, Padding = UDim.new(0, 5), VerticalAlignment = Enum.VerticalAlignment.Center }, chipBar)
-new("UIPadding", { PaddingLeft = UDim.new(0, 6), PaddingRight = UDim.new(0, 6) }, chipBar)
+}, JH.pPrices)
+corner(JH.chipBar, 10)
+new("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal, Padding = UDim.new(0, 5), VerticalAlignment = Enum.VerticalAlignment.Center }, JH.chipBar)
+new("UIPadding", { PaddingLeft = UDim.new(0, 6), PaddingRight = UDim.new(0, 6) }, JH.chipBar)
 
-local selectBtn = btnK(pPrices, "select", { Size = UDim2.fromOffset(86, 36), Position = UDim2.new(1, -92, 0, 66), BackgroundColor3 = C.acc2, TextColor3 = C.bg })
+JH.selectBtn = btnK(JH.pPrices, "select", { Size = UDim2.fromOffset(86, 36), Position = UDim2.new(1, -92, 0, 66), BackgroundColor3 = C.acc2, TextColor3 = C.bg })
 
-local unitTitle = txt(pPrices, "", { Size = UDim2.new(1, -12, 0, 20), Position = UDim2.fromOffset(8, 108), Font = Enum.Font.GothamBold, TextSize = 13 })
-local stageGroup = new("CanvasGroup", { Size = UDim2.new(1, -12, 1, -134), Position = UDim2.fromOffset(6, 130), BackgroundColor3 = C.side, BorderSizePixel = 0 }, pPrices)
-corner(stageGroup, 10)
-local stageList = new("ScrollingFrame", {
+JH.unitTitle = txt(JH.pPrices, "", { Size = UDim2.new(1, -12, 0, 20), Position = UDim2.fromOffset(8, 108), Font = Enum.Font.GothamBold, TextSize = 13 })
+JH.stageGroup = new("CanvasGroup", { Size = UDim2.new(1, -12, 1, -134), Position = UDim2.fromOffset(6, 130), BackgroundColor3 = C.side, BorderSizePixel = 0 }, JH.pPrices)
+corner(JH.stageGroup, 10)
+JH.stageList = new("ScrollingFrame", {
 	Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, BorderSizePixel = 0, ScrollBarThickness = 3,
 	AutomaticCanvasSize = Enum.AutomaticSize.Y, CanvasSize = UDim2.new(),
-}, stageGroup)
-new("UIListLayout", { Padding = UDim.new(0, 4), SortOrder = Enum.SortOrder.LayoutOrder }, stageList)
-new("UIPadding", { PaddingTop = UDim.new(0, 5), PaddingLeft = UDim.new(0, 5), PaddingRight = UDim.new(0, 5), PaddingBottom = UDim.new(0, 5) }, stageList)
+}, JH.stageGroup)
+new("UIListLayout", { Padding = UDim.new(0, 4), SortOrder = Enum.SortOrder.LayoutOrder }, JH.stageList)
+new("UIPadding", { PaddingTop = UDim.new(0, 5), PaddingLeft = UDim.new(0, 5), PaddingRight = UDim.new(0, 5), PaddingBottom = UDim.new(0, 5) }, JH.stageList)
 
 local function unitList()
 	local seen, out = {}, {}
@@ -1598,21 +1596,21 @@ local function unitList()
 	return out
 end
 
-local chipBtns = {}
+JH.chipBtns = {}
 local function paintChips()
-	for name, b in pairs(chipBtns) do
+	for name, b in pairs(JH.chipBtns) do
 		local on = (name == pendingUnit)
 		setBtn(b, on and C.acc or C.row, on and C.bg or C.text)
 	end
 end
 
 local function rebuildStages(animate)
-	for _, ch in ipairs(stageList:GetChildren()) do
+	for _, ch in ipairs(JH.stageList:GetChildren()) do
 		if ch:IsA("Frame") or ch:IsA("TextLabel") then ch:Destroy() end
 	end
 	if not selUnit then
-		unitTitle.Text = ""
-		txtK(stageList, "pick_first", { Size = UDim2.new(1, -6, 0, 30), TextColor3 = C.sub })
+		JH.unitTitle.Text = ""
+		txtK(JH.stageList, "pick_first", { Size = UDim2.new(1, -6, 0, 30), TextColor3 = C.sub })
 		return
 	end
 	local maxStage, uses = 1, {}
@@ -1623,10 +1621,10 @@ local function rebuildStages(animate)
 			uses[m.stage] = (uses[m.stage] or 0) + 1
 		end
 	end
-	unitTitle.Text = T("unit_title", selUnit, math.floor(maxStage))
+	JH.unitTitle.Text = T("unit_title", selUnit, math.floor(maxStage))
 	for st = 1, maxStage do
 		local p = pslot(selUnit, st, true)
-		local row = new("Frame", { Size = UDim2.new(1, -6, 0, 36), BackgroundColor3 = C.row, BorderSizePixel = 0, LayoutOrder = st }, stageList)
+		local row = new("Frame", { Size = UDim2.new(1, -6, 0, 36), BackgroundColor3 = C.row, BorderSizePixel = 0, LayoutOrder = st }, JH.stageList)
 		corner(row, 9)
 		txt(row, T(st == 1 and "stage_place" or "stage_up", st), { Size = UDim2.new(0, 190, 1, 0), Position = UDim2.fromOffset(12, 0), Font = Enum.Font.GothamBold })
 		txt(row, "x" .. (uses[st] or 0), { Size = UDim2.fromOffset(40, 36), Position = UDim2.fromOffset(200, 0), TextColor3 = C.sub, TextSize = 12 })
@@ -1648,19 +1646,19 @@ local function rebuildStages(animate)
 		end)
 	end
 	if animate then
-		stageGroup.GroupTransparency = 1
-		tw(stageGroup, 0.3, { GroupTransparency = 0 }, QUINT)
+		JH.stageGroup.GroupTransparency = 1
+		tw(JH.stageGroup, 0.3, { GroupTransparency = 0 }, QUINT)
 	end
 end
 
 local function rebuildChips()
-	for _, ch in ipairs(chipBar:GetChildren()) do
+	for _, ch in ipairs(JH.chipBar:GetChildren()) do
 		if ch:IsA("TextButton") or ch:IsA("TextLabel") then ch:Destroy() end
 	end
-	chipBtns = {}
+	JH.chipBtns = {}
 	local units = unitList()
 	if #units == 0 then
-		txtK(chipBar, "no_units", { Size = UDim2.fromOffset(160, 30), TextColor3 = C.sub })
+		txtK(JH.chipBar, "no_units", { Size = UDim2.fromOffset(160, 30), TextColor3 = C.sub })
 		selUnit, pendingUnit = nil, nil
 		return
 	end
@@ -1668,18 +1666,18 @@ local function rebuildChips()
 	for _, u in ipairs(units) do if u == selUnit then found = true end end
 	if not found then selUnit = nil end
 	for _, u in ipairs(units) do
-		local b = btn(chipBar, u, { AutomaticSize = Enum.AutomaticSize.X, Size = UDim2.fromOffset(20, 26), BackgroundColor3 = C.row }, nil, true)
+		local b = btn(JH.chipBar, u, { AutomaticSize = Enum.AutomaticSize.X, Size = UDim2.fromOffset(20, 26), BackgroundColor3 = C.row }, nil, true)
 		new("UIPadding", { PaddingLeft = UDim.new(0, 12), PaddingRight = UDim.new(0, 12) }, b)
 		b.MouseButton1Click:Connect(function()
 			pendingUnit = u
 			paintChips()
 		end)
-		chipBtns[u] = b
+		JH.chipBtns[u] = b
 	end
 	paintChips()
 end
 
-selectBtn.MouseButton1Click:Connect(function()
+JH.selectBtn.MouseButton1Click:Connect(function()
 	if not pendingUnit then status("need_unit") return end
 	selUnit = pendingUnit
 	rebuildStages(true)
@@ -1689,33 +1687,32 @@ end)
 --------------------------------------------------------------------------
 -- PAGE: Steps (ดูลำดับ / เลื่อน / ลบ / ทดสอบทีละสเต็ป)
 --------------------------------------------------------------------------
-local pSteps = newPage("tab_steps")
-local stepsStatus
-local bar4 = hbar(pSteps, { Size = UDim2.new(1, -12, 0, 30), Position = UDim2.fromOffset(6, 6) })
-stepsStatus = txt(bar4, "", { Size = UDim2.new(0.6, -3, 1, 0), TextColor3 = C.sub, TextSize = 12 })
-btnK(bar4, "clear_all", { Size = UDim2.new(0.4, -3, 1, 0), BackgroundColor3 = C.bad }, function()
+JH.pSteps = newPage("tab_steps")
+JH.bar4 = hbar(JH.pSteps, { Size = UDim2.new(1, -12, 0, 30), Position = UDim2.fromOffset(6, 6) })
+JH.stepsStatus = txt(JH.bar4, "", { Size = UDim2.new(0.6, -3, 1, 0), TextColor3 = C.sub, TextSize = 12 })
+btnK(JH.bar4, "clear_all", { Size = UDim2.new(0.4, -3, 1, 0), BackgroundColor3 = C.bad }, function()
 	if running or recording then status("stop_first") return end
 	steps, prices, meta = {}, {}, {}
 	curIdx = 0
 	UI.refresh()
 end)
 
-local stepList = new("ScrollingFrame", {
+JH.stepList = new("ScrollingFrame", {
 	Size = UDim2.new(1, -12, 1, -48), Position = UDim2.fromOffset(6, 42), BackgroundColor3 = C.side, BorderSizePixel = 0,
 	ScrollBarThickness = 3, AutomaticCanvasSize = Enum.AutomaticSize.Y, CanvasSize = UDim2.new(),
-}, pSteps)
-corner(stepList, 10)
-new("UIListLayout", { Padding = UDim.new(0, 3), SortOrder = Enum.SortOrder.LayoutOrder }, stepList)
-new("UIPadding", { PaddingTop = UDim.new(0, 4), PaddingLeft = UDim.new(0, 4), PaddingRight = UDim.new(0, 4), PaddingBottom = UDim.new(0, 4) }, stepList)
+}, JH.pSteps)
+corner(JH.stepList, 10)
+new("UIListLayout", { Padding = UDim.new(0, 3), SortOrder = Enum.SortOrder.LayoutOrder }, JH.stepList)
+new("UIPadding", { PaddingTop = UDim.new(0, 4), PaddingLeft = UDim.new(0, 4), PaddingRight = UDim.new(0, 4), PaddingBottom = UDim.new(0, 4) }, JH.stepList)
 
 local stepRows = {}
 local function refreshSteps()
-	for _, ch in ipairs(stepList:GetChildren()) do
+	for _, ch in ipairs(JH.stepList:GetChildren()) do
 		if ch:IsA("Frame") then ch:Destroy() end
 	end
 	stepRows = {}
 	for i, s in ipairs(steps) do
-		local row = new("Frame", { Size = UDim2.new(1, -6, 0, 30), BackgroundColor3 = C.row, BorderSizePixel = 0, LayoutOrder = i }, stepList)
+		local row = new("Frame", { Size = UDim2.new(1, -6, 0, 30), BackgroundColor3 = C.row, BorderSizePixel = 0, LayoutOrder = i }, JH.stepList)
 		corner(row, 8)
 		stepRows[i] = row
 		txt(row, string.format("#%d  %s", i, describe(i)), { Size = UDim2.fromOffset(280, 30), Position = UDim2.fromOffset(10, 0), TextSize = 12 })
@@ -1745,7 +1742,7 @@ local function refreshSteps()
 		end, true)
 		bind(doB, "Text", "do_step")
 	end
-	stepsStatus.Text = T("steps_count", #steps)
+	JH.stepsStatus.Text = T("steps_count", #steps)
 end
 
 local refreshPending = false
@@ -1767,17 +1764,17 @@ end
 --------------------------------------------------------------------------
 -- PAGE: Settings
 --------------------------------------------------------------------------
-local pSet = newPage("tab_settings")
-local sScroll = scrollList(pSet)
+JH.pSet = newPage("tab_settings")
+JH.sScroll = scrollList(JH.pSet)
 local so = counter()
 
 -- ภาษา
-local langRow = new("Frame", { Size = UDim2.new(1, -6, 0, 44), BackgroundColor3 = C.row, BorderSizePixel = 0, LayoutOrder = so() }, sScroll)
-corner(langRow, 10)
-txtK(langRow, "language", { Size = UDim2.new(0.4, 0, 1, 0), Position = UDim2.fromOffset(14, 0), Font = Enum.Font.GothamBold })
-local langBtns = {}
+JH.langRow = new("Frame", { Size = UDim2.new(1, -6, 0, 44), BackgroundColor3 = C.row, BorderSizePixel = 0, LayoutOrder = so() }, JH.sScroll)
+corner(JH.langRow, 10)
+txtK(JH.langRow, "language", { Size = UDim2.new(0.4, 0, 1, 0), Position = UDim2.fromOffset(14, 0), Font = Enum.Font.GothamBold })
+JH.langBtns = {}
 local function paintLang()
-	for code, b in pairs(langBtns) do
+	for code, b in pairs(JH.langBtns) do
 		local on = (CFG.lang == code)
 		setBtn(b, on and C.acc or C.sel, on and C.bg or C.text)
 	end
@@ -1790,22 +1787,22 @@ local function setLang(code)
 	relang()
 	UI.refresh()
 end
-langBtns.en = btn(langRow, "English", { Size = UDim2.fromOffset(86, 28), Position = UDim2.new(1, -184, 0.5, -14) }, function() setLang("en") end)
-langBtns.th = btn(langRow, "ไทย", { Size = UDim2.fromOffset(86, 28), Position = UDim2.new(1, -94, 0.5, -14) }, function() setLang("th") end)
+JH.langBtns.en = btn(JH.langRow, "English", { Size = UDim2.fromOffset(86, 28), Position = UDim2.new(1, -184, 0.5, -14) }, function() setLang("en") end)
+JH.langBtns.th = btn(JH.langRow, "ไทย", { Size = UDim2.fromOffset(86, 28), Position = UDim2.new(1, -94, 0.5, -14) }, function() setLang("th") end)
 paintLang()
 
-numRow(sScroll, so, "retry", "retry")
-numRow(sScroll, so, "verify", "verifyTimeout")
-numRow(sScroll, so, "money_timeout", "moneyTimeout")
-toggle(sScroll, "use_delay", CFG.useDelay, { Size = UDim2.new(1, -6, 0, 38), LayoutOrder = so() }, function(v)
+numRow(JH.sScroll, so, "retry", "retry")
+numRow(JH.sScroll, so, "verify", "verifyTimeout")
+numRow(JH.sScroll, so, "money_timeout", "moneyTimeout")
+toggle(JH.sScroll, "use_delay", CFG.useDelay, { Size = UDim2.new(1, -6, 0, 38), LayoutOrder = so() }, function(v)
 	CFG.useDelay = v
 	saveCfg()
 end)
-txtK(sScroll, "info_money", { Size = UDim2.new(1, -6, 0, 18), TextColor3 = C.sub, TextSize = 11, LayoutOrder = so() })
-txtK(sScroll, "info_keys", { Size = UDim2.new(1, -6, 0, 18), TextColor3 = C.sub, TextSize = 11, LayoutOrder = so() })
+txtK(JH.sScroll, "info_money", { Size = UDim2.new(1, -6, 0, 18), TextColor3 = C.sub, TextSize = 11, LayoutOrder = so() })
+txtK(JH.sScroll, "info_keys", { Size = UDim2.new(1, -6, 0, 18), TextColor3 = C.sub, TextSize = 11, LayoutOrder = so() })
 
 local conns = {}
-btnK(sScroll, "destroy", { Size = UDim2.new(1, -6, 0, 34), BackgroundColor3 = C.bad, LayoutOrder = so() }, function()
+btnK(JH.sScroll, "destroy", { Size = UDim2.new(1, -6, 0, 34), BackgroundColor3 = C.bad, LayoutOrder = so() }, function()
 	stopMacro()
 	recording = false
 	for _, c in ipairs(conns) do pcall(function() c:Disconnect() end) end
@@ -1822,26 +1819,26 @@ local POSE = {
 	Left  = { up = 25, yaw = 10, elbow = 65, twist = 78 },
 }
 
-local profile = new("Frame", { Size = UDim2.new(1, -14, 0, 176), Position = UDim2.new(0, 7, 1, -183), BackgroundColor3 = C.row, BorderSizePixel = 0 }, side)
-corner(profile, 12)
-new("UIStroke", { Color = C.acc, Thickness = 1, Transparency = 0.65 }, profile)
+JH.profile = new("Frame", { Size = UDim2.new(1, -14, 0, 176), Position = UDim2.new(0, 7, 1, -183), BackgroundColor3 = C.row, BorderSizePixel = 0 }, side)
+corner(JH.profile, 12)
+new("UIStroke", { Color = C.acc, Thickness = 1, Transparency = 0.65 }, JH.profile)
 
-local avatarImg = new("ImageLabel", { Size = UDim2.new(1, -14, 0, 104), Position = UDim2.fromOffset(7, 7), BackgroundColor3 = C.bg, BorderSizePixel = 0, ScaleType = Enum.ScaleType.Crop }, profile)
-corner(avatarImg, 9)
-local vp = new("ViewportFrame", {
+JH.avatarImg = new("ImageLabel", { Size = UDim2.new(1, -14, 0, 104), Position = UDim2.fromOffset(7, 7), BackgroundColor3 = C.bg, BorderSizePixel = 0, ScaleType = Enum.ScaleType.Crop }, JH.profile)
+corner(JH.avatarImg, 9)
+JH.vp = new("ViewportFrame", {
 	Size = UDim2.new(1, -14, 0, 104), Position = UDim2.fromOffset(7, 7), BackgroundColor3 = C.bg, BorderSizePixel = 0,
 	Ambient = Color3.fromRGB(175, 180, 200), LightColor = Color3.new(1, 1, 1), LightDirection = Vector3.new(-0.6, -0.8, 0.5), Visible = false,
-}, profile)
-corner(vp, 9)
-txt(profile, LP.DisplayName, { Size = UDim2.new(1, -14, 0, 18), Position = UDim2.fromOffset(9, 114), Font = Enum.Font.GothamBold, TextSize = 13 })
-txt(profile, "@" .. LP.Name, { Size = UDim2.new(1, -14, 0, 14), Position = UDim2.fromOffset(9, 132), TextSize = 11, TextColor3 = C.sub })
-local profMoney = txt(profile, "$ --", { Size = UDim2.new(1, -14, 0, 16), Position = UDim2.fromOffset(9, 150), TextSize = 12, Font = Enum.Font.GothamBold, TextColor3 = C.ok })
+}, JH.profile)
+corner(JH.vp, 9)
+txt(JH.profile, LP.DisplayName, { Size = UDim2.new(1, -14, 0, 18), Position = UDim2.fromOffset(9, 114), Font = Enum.Font.GothamBold, TextSize = 13 })
+txt(JH.profile, "@" .. LP.Name, { Size = UDim2.new(1, -14, 0, 14), Position = UDim2.fromOffset(9, 132), TextSize = 11, TextColor3 = C.sub })
+JH.profMoney = txt(JH.profile, "$ --", { Size = UDim2.new(1, -14, 0, 16), Position = UDim2.fromOffset(9, 150), TextSize = 12, Font = Enum.Font.GothamBold, TextColor3 = C.ok })
 
 task.spawn(function()
 	local ok, url = pcall(function()
 		return Players:GetUserThumbnailAsync(LP.UserId, Enum.ThumbnailType.AvatarBust, Enum.ThumbnailSize.Size150x150)
 	end)
-	if ok and url then avatarImg.Image = url end
+	if ok and url then JH.avatarImg.Image = url end
 end)
 
 local vpModel, vpT = nil, 0
@@ -1887,18 +1884,18 @@ local function buildProfileModel()
 	local okR = armPose(clone, "Right", POSE.Right)
 	local okL = armPose(clone, "Left", POSE.Left)
 	if not (okR and okL) then return end
-	clone.Parent = vp
-	local cam = new("Camera", { FieldOfView = 30, CFrame = CFrame.lookAt(Vector3.new(0, 1.3, -7.6), Vector3.new(0, 1.05, 0)) }, vp)
-	vp.CurrentCamera = cam
+	clone.Parent = JH.vp
+	local cam = new("Camera", { FieldOfView = 30, CFrame = CFrame.lookAt(Vector3.new(0, 1.3, -7.6), Vector3.new(0, 1.05, 0)) }, JH.vp)
+	JH.vp.CurrentCamera = cam
 	vpModel = clone
-	vp.Visible = true
-	avatarImg.Visible = false
+	JH.vp.Visible = true
+	JH.avatarImg.Visible = false
 end
 
 task.spawn(function() pcall(buildProfileModel) end)
 table.insert(conns, LP.CharacterAdded:Connect(function()
-	vp.Visible = false
-	avatarImg.Visible = true
+	JH.vp.Visible = false
+	JH.avatarImg.Visible = true
 	task.wait(2)
 	pcall(buildProfileModel)
 end))
@@ -1998,16 +1995,16 @@ local function updateCard()
 			frac = (i - 1) / n
 		end
 	end
-	cStateLbl.Text = stText
-	cStateLbl.TextColor3 = stCol
-	tw(dot, 0.2, { BackgroundColor3 = stCol })
-	cCountLbl.Text = (n > 0 and not recording) and (math.min(math.max(curIdx, 1), n) .. " / " .. n) or ""
-	cL1.Text, cL2.Text, cL3.Text = l1, l2, l3
-	tw(barFill, 0.3, { Size = UDim2.new(math.clamp(frac, 0, 1), 0, 1, 0) })
+	JH.cStateLbl.Text = stText
+	JH.cStateLbl.TextColor3 = stCol
+	tw(JH.dot, 0.2, { BackgroundColor3 = stCol })
+	JH.cCountLbl.Text = (n > 0 and not recording) and (math.min(math.max(curIdx, 1), n) .. " / " .. n) or ""
+	JH.cL1.Text, JH.cL2.Text, JH.cL3.Text = l1, l2, l3
+	tw(JH.barFill, 0.3, { Size = UDim2.new(math.clamp(frac, 0, 1), 0, 1, 0) })
 	if cardState ~= stText then
 		cardState = stText
-		cardStroke.Transparency = 0.1
-		tw(cardStroke, 0.6, { Transparency = 0.6 })
+		JH.cardStroke.Transparency = 0.1
+		tw(JH.cardStroke, 0.6, { Transparency = 0.6 })
 	end
 	-- ไฮไลท์สเต็ปที่กำลังทำในแท็บ Steps
 	for i, r in pairs(stepRows) do
@@ -2025,14 +2022,14 @@ end
 local rot, acc, breathe = 0, 0, 0
 table.insert(conns, RunService.Heartbeat:Connect(function(dt)
 	rot = (rot + dt * 60) % 360
-	grad.Rotation = rot
-	logoGrad.Rotation = rot
+	JH.grad.Rotation = rot
+	JH.logoGrad.Rotation = rot
 	acc = acc + dt
 	if acc >= 0.25 then
 		acc = 0
 		local m = fmt(getMoney())
-		moneyLbl.Text = "$ " .. m
-		profMoney.Text = "$ " .. m
+		JH.moneyLbl.Text = "$ " .. m
+		JH.profMoney.Text = "$ " .. m
 		pcall(updateCard)
 	end
 	if vpModel and win.Visible then
