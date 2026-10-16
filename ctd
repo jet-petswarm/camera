@@ -1,6 +1,7 @@
 --[[
 	JET HUB _ CAMERA  v2  -  Cameraman Tower Defense
 
+	v3: ราคา/ล็อคราคาเซฟลงไฟล์มาโครอัตโนมัติ, Skip Wave รัวได้ตามเวลาที่ตั้ง (ต่ำสุด 0.03 วิ)
 	v2:
 	  * จำสวิตช์ที่เปิดไว้ (Vote/Speed/Skip/Play Again/Play/Loop) แล้วเปิดให้อัตโนมัติตอนโหลด
 	  * ราคาแบบเลือกยูนิต -> กด Select -> แก้ราคาตามขั้น (ขั้น 1 = วาง, ขั้น 2.. = อัพเกรด)
@@ -163,6 +164,15 @@ local LANG = {
 		loaded = "Loaded %s (%d steps)",
 		pick_file = "Pick a file first",
 		deleted = "Deleted %s",
+		rec_rejected = "Not recorded: money didn't drop (not enough money?)",
+		share = "Share", import_btn = "Import",
+		import_ph = "Paste macro code here (or leave empty to use clipboard)",
+		share_ok = "Copied code of %s to clipboard",
+		share_fail = "Couldn't build the share code",
+		no_clip = "Executor has no clipboard function",
+		import_ok = "Imported as %s (%d steps)",
+		import_bad = "Invalid macro code",
+		import_empty = "Nothing to import: paste a code or copy one first",
 		step_ok = "Step %d done",
 		step_fail = "Step %d failed",
 	},
@@ -255,6 +265,15 @@ local LANG = {
 		loaded = "โหลด %s แล้ว (%d สเต็ป)",
 		pick_file = "เลือกไฟล์ก่อน",
 		deleted = "ลบ %s แล้ว",
+		rec_rejected = "ไม่บันทึก: เงินไม่ลด (เงินไม่พอ?)",
+		share = "แชร์", import_btn = "นำเข้า",
+		import_ph = "วางโค้ดมาโครที่นี่ (ว่างไว้ = ใช้ที่คัดลอกไว้)",
+		share_ok = "คัดลอกโค้ดมาโคร %s แล้ว",
+		share_fail = "สร้างโค้ดแชร์ไม่สำเร็จ",
+		no_clip = "executor ไม่รองรับคลิปบอร์ด",
+		import_ok = "นำเข้าเป็น %s แล้ว (%d สเต็ป)",
+		import_bad = "โค้ดมาโครไม่ถูกต้อง",
+		import_empty = "ไม่มีอะไรให้นำเข้า: วางโค้ดหรือคัดลอกมาก่อน",
 		step_ok = "สเต็ป %d สำเร็จ",
 		step_fail = "สเต็ป %d ไม่สำเร็จ",
 	},
@@ -464,6 +483,7 @@ local recording, running = false, false
 local runId, lastT = 0, 0
 local curIdx, phase = 0, "act"
 local UI = { refresh = function() end, playOff = function() end }
+local autoSave = function() end -- ถูกกำหนดจริงทีหลัง (เซฟมาโคร+ราคาอัตโนมัติ)
 
 local function recompute()
 	meta = {}
@@ -549,40 +569,101 @@ end
 local function onRecord(remote, a)
 	if not recording then return end
 	local now = os.clock()
+	local prevT = lastT
 	local delay = now - lastT
 	lastT = now
 	local before = getMoney()
-	local step
+	local step, pos, base, tid
 	if remote == TowerAdd then
 		if typeof(a.CFrame) ~= "CFrame" or type(a.Name) ~= "string" then return end
 		local cf = a.CFrame
 		local p = (typeof(a.Pos) == "Vector3") and a.Pos or cf.Position
+		pos = p
+		base = nearCount(p, 3) or 0
 		step = { type = "add", name = a.Name, unitId = a.UnitId, cframe = { cf:GetComponents() }, pos = { p.X, p.Y, p.Z }, delay = delay }
 	elseif remote == TowerUpgrade or remote == TowerSell then
 		if not a.Id then return end
+		tid = a.Id
 		local inst = findTowerById(a.Id)
 		local p = inst and posOf(inst)
 		if not p then status("tower_pos_missing") return end
 		step = { type = (remote == TowerUpgrade) and "upgrade" or "sell", tpos = { p.X, p.Y, p.Z }, delay = delay }
+		step._inst = inst
 	else
 		return
 	end
+	local inst = step._inst
+	step._inst = nil
+
+	-- ใส่ไว้ก่อน (ชั่วคราว) เพื่อรักษาลำดับ แล้วตรวจว่าเงินลดจริงถึงจะเก็บ ไม่งั้นลบออก
 	table.insert(steps, step)
 	recompute()
-	local idx = #steps
-	local m = meta[idx]
 	UI.refresh()
 	status("rec_progress", #steps)
-	if before and step.type ~= "sell" and m then
-		task.spawn(function()
-			local d = measureDrop(before, 3)
-			if d > 0 then
-				local p = pslot(m.unit, m.stage, true)
-				if not (CFG.priceLockAll or p.locked) then p.price = d end
-				UI.refresh()
+
+	task.spawn(function()
+		local tFire = now
+		local drop, prev = 0, before
+		local confirmed = false
+		local gained = false
+		local t0 = os.clock()
+		local firstDrop
+		while os.clock() - t0 < 2.5 do
+			task.wait(0.03)
+			local m = getMoney()
+			if prev and m then
+				if m < prev then
+					drop = drop + (prev - m)
+					firstDrop = firstDrop or os.clock()
+				elseif m > prev and step.type == "sell" then
+					gained = true
+				end
 			end
-		end)
-	end
+			if m then prev = m end
+			-- ยืนยันฝั่งเซิร์ฟเวอร์ (ใช้เป็นตัวเสริม / ตอนอ่านเงินไม่ได้)
+			if step.type == "add" then
+				local n = nearCount(pos, 3)
+				if n and n > base then confirmed = true end
+			elseif step.type == "upgrade" then
+				local e = upEvt[tid]
+				if e and e.t >= tFire then confirmed = true end
+			else
+				if inst and (not inst.Parent or not inst:IsDescendantOf(workspace)) then confirmed = true end
+			end
+			if step.type == "sell" then
+				if confirmed or gained then break end
+			elseif before then
+				if firstDrop and os.clock() - firstDrop > 0.4 then break end -- เก็บยอดลดให้ครบ
+			elseif confirmed then
+				break -- อ่านเงินไม่ได้: เชื่อการยืนยันจากเซิร์ฟเวอร์
+			end
+		end
+		local accepted
+		if step.type == "sell" then accepted = confirmed or gained
+		elseif before then accepted = drop > 0
+		else accepted = confirmed end
+
+		local idx = table.find(steps, step)
+		if not accepted then
+			if idx then table.remove(steps, idx) end
+			if lastT == now then lastT = prevT end
+			recompute()
+			UI.refresh()
+			status("rec_rejected")
+			autoSave()
+			return
+		end
+		if step.type ~= "sell" and drop > 0 then
+			recompute()
+			local m = idx and meta[idx]
+			if m then
+				local p = pslot(m.unit, m.stage, true)
+				if not (CFG.priceLockAll or p.locked) then p.price = drop end
+			end
+		end
+		autoSave()
+		UI.refresh()
+	end)
 end
 
 --------------------------------------------------------------------------
@@ -696,6 +777,7 @@ local function execStep(step, alive, idx)
 		if ok then
 			if drop and drop > 0 and CFG.autoLearn then
 				setLearned(idx, drop)
+				autoSave()
 				UI.refresh()
 			end
 			return true
@@ -796,6 +878,25 @@ local function saveMacro(name)
 	status("saved", name, #steps)
 	return true
 end
+local pendingSave = 0
+autoSave = function(nameOverride)
+	if recording or #steps == 0 or not writefile then return end
+	pendingSave = pendingSave + 1
+	local my = pendingSave
+	task.delay(0.4, function()
+		if my ~= pendingSave or recording then return end
+		local name = nameOverride or CFG.selected
+		if not name or name == "" then name = "AutoMacro" end
+		name = cleanName(name)
+		if name == "" then name = "AutoMacro" end
+		local ok = pcall(function()
+			ensureDir()
+			writefile(filePath(name), HttpService:JSONEncode({ v = 2, steps = steps, prices = prices }))
+		end)
+		if ok and CFG.selected ~= name then CFG.selected = name saveCfg() end
+	end)
+end
+
 local function loadMacro(name)
 	if not (isfile and readfile and isfile(filePath(name))) then status("file_missing", tostring(name)) return false end
 	local ok, t = pcall(function() return HttpService:JSONDecode(readfile(filePath(name))) end)
@@ -827,6 +928,147 @@ local function loadMacro(name)
 	end
 	status("read_fail")
 	return false
+end
+
+--------------------------------------------------------------------------
+-- Share / Import (โค้ดแชร์ = JHC1: + base64 ของ JSON  ปลอดภัย ไม่รันโค้ด)
+--------------------------------------------------------------------------
+local B64C = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+local B64E, B64D = {}, {}
+for i = 1, 64 do
+	local ch = B64C:sub(i, i)
+	B64E[i - 1] = ch
+	B64D[ch:byte()] = i - 1
+end
+local function b64enc(str)
+	local out = {}
+	for i = 1, #str, 3 do
+		local x, y, z = str:byte(i, i + 2)
+		local v = x * 65536 + (y or 0) * 256 + (z or 0)
+		local c1 = math.floor(v / 262144) % 64
+		local c2 = math.floor(v / 4096) % 64
+		local c3 = math.floor(v / 64) % 64
+		local c4 = v % 64
+		out[#out + 1] = B64E[c1] .. B64E[c2] .. (y and B64E[c3] or "=") .. (z and B64E[c4] or "=")
+	end
+	return table.concat(out)
+end
+local function b64dec(str)
+	str = str:gsub("[^%w%+/=]", "")
+	local out = {}
+	for i = 1, #str, 4 do
+		local a, b, c, d = str:byte(i, i + 3)
+		local va, vb = B64D[a or 0], B64D[b or 0]
+		if va == nil or vb == nil then return nil end
+		local vc = (c and c ~= 61) and B64D[c] or nil
+		local vd = (d and d ~= 61) and B64D[d] or nil
+		if (c and c ~= 61 and vc == nil) or (d and d ~= 61 and vd == nil) then return nil end
+		local v = va * 262144 + vb * 4096 + (vc or 0) * 64 + (vd or 0)
+		local o1, o2, o3 = math.floor(v / 65536) % 256, math.floor(v / 256) % 256, v % 256
+		if vc == nil then out[#out + 1] = string.char(o1)
+		elseif vd == nil then out[#out + 1] = string.char(o1, o2)
+		else out[#out + 1] = string.char(o1, o2, o3) end
+	end
+	return table.concat(out)
+end
+
+local function numArr(t, n)
+	if type(t) ~= "table" then return nil end
+	for i = 1, n do if type(t[i]) ~= "number" then return nil end end
+	local o = {}
+	for i = 1, n do o[i] = t[i] end
+	return o
+end
+local function cleanSteps(raw)
+	if type(raw) ~= "table" or #raw == 0 or #raw > 3000 then return nil end
+	local out = {}
+	for _, st in ipairs(raw) do
+		if type(st) ~= "table" then return nil end
+		local ty = st.type
+		if ty == "add" then
+			local pos, cf = numArr(st.pos, 3), numArr(st.cframe, 12)
+			if not pos or not cf or type(st.name) ~= "string" then return nil end
+			out[#out + 1] = {
+				type = "add", name = st.name:sub(1, 60),
+				unitId = (type(st.unitId) == "string") and st.unitId:sub(1, 80) or nil,
+				cframe = cf, pos = pos, delay = tonumber(st.delay) or 0,
+			}
+		elseif ty == "upgrade" or ty == "sell" then
+			local tp = numArr(st.tpos, 3)
+			if not tp then return nil end
+			out[#out + 1] = { type = ty, tpos = tp, delay = tonumber(st.delay) or 0 }
+		else
+			return nil
+		end
+	end
+	return out
+end
+local function cleanPrices(raw)
+	local out = {}
+	if type(raw) ~= "table" then return out end
+	for unit, stages in pairs(raw) do
+		if type(unit) == "string" and type(stages) == "table" then
+			local u = {}
+			for k, p in pairs(stages) do
+				if type(p) == "table" and tonumber(k) then
+					u[tostring(k)] = { price = tonumber(p.price) or 0, locked = p.locked == true }
+				end
+			end
+			out[unit:sub(1, 60)] = u
+		end
+	end
+	return out
+end
+
+local function setClip(str)
+	local f = setclipboard or toclipboard or set_clipboard or (Clipboard and Clipboard.set)
+	if not f then return false end
+	return (pcall(f, str))
+end
+local function getClip()
+	local f = getclipboard or (Clipboard and Clipboard.get)
+	if not f then return nil end
+	local ok, v = pcall(f)
+	return ok and type(v) == "string" and v or nil
+end
+
+local function makeShareCode(name)
+	local data
+	if isfile and readfile and isfile(filePath(name)) then
+		local ok, t = pcall(function() return HttpService:JSONDecode(readfile(filePath(name))) end)
+		if ok and type(t) == "table" and t.steps then data = { steps = t.steps, prices = t.prices } end
+	end
+	if not data and name == CFG.selected and #steps > 0 then data = { steps = steps, prices = prices } end
+	if not data then return nil end
+	local ok, js = pcall(HttpService.JSONEncode, HttpService, { n = name, v = 2, steps = data.steps, prices = data.prices or {} })
+	if not ok then return nil end
+	return "JHC1:" .. b64enc(js)
+end
+
+-- คืน (ชื่อมาโคร, จำนวนสเต็ป) หรือ nil
+local function importCode(code)
+	code = tostring(code or ""):gsub("%s", "")
+	if code == "" then return nil, "empty" end
+	local body = code:match("^JHC1:(.+)$")
+	if not body then return nil, "bad" end
+	local js = b64dec(body)
+	if not js then return nil, "bad" end
+	local ok, t = pcall(function() return HttpService:JSONDecode(js) end)
+	if not ok or type(t) ~= "table" then return nil, "bad" end
+	local st = cleanSteps(t.steps)
+	if not st then return nil, "bad" end
+	if not writefile then return nil, "nowrite" end
+	local name = cleanName(t.n)
+	if name == "" then name = "Imported" end
+	local base, n = name, 1
+	while isfile and isfile(filePath(name)) do
+		n = n + 1
+		name = base .. "_" .. n
+	end
+	ensureDir()
+	local w = pcall(writefile, filePath(name), HttpService:JSONEncode({ v = 2, steps = st, prices = cleanPrices(t.prices) }))
+	if not w then return nil, "nowrite" end
+	return name, #st
 end
 
 --------------------------------------------------------------------------
@@ -1187,6 +1429,7 @@ local barFill = new("Frame", { Size = UDim2.new(0, 0, 1, 0), BackgroundColor3 = 
 corner(barFill, 3)
 new("UIGradient", { Color = ColorSequence.new(C.acc, C.acc2) }, barFill)
 
+local nameBox
 local recSet, playSet, loopSet
 recSet = toggle(mScroll, "record", false, { Size = UDim2.new(1, -6, 0, 46), LayoutOrder = mo() }, function(v)
 	if v then
@@ -1202,6 +1445,9 @@ recSet = toggle(mScroll, "record", false, { Size = UDim2.new(1, -6, 0, 46), Layo
 		recording = false
 		UI.refresh()
 		status("rec_stopped", #steps)
+		local nm = cleanName(nameBox.Text)
+		if nm ~= "" then CFG.selected = nm saveCfg() end
+		autoSave()
 	end
 end, "record_d")
 
@@ -1226,7 +1472,7 @@ end, "loop_d")
 local nameRow = new("Frame", { Size = UDim2.new(1, -6, 0, 36), BackgroundColor3 = C.row, BorderSizePixel = 0, LayoutOrder = mo() }, mScroll)
 corner(nameRow, 10)
 txtK(nameRow, "macro_name", { Size = UDim2.new(0.4, -10, 1, 0), Position = UDim2.fromOffset(14, 0) })
-local nameBox = box(nameRow, CFG.selected or "Macro1", { Size = UDim2.new(0.6, -18, 0, 26), Position = UDim2.new(0.4, 4, 0.5, -13), TextXAlignment = Enum.TextXAlignment.Center })
+nameBox = box(nameRow, CFG.selected or "Macro1", { Size = UDim2.new(0.6, -18, 0, 26), Position = UDim2.new(0.4, 4, 0.5, -13), TextXAlignment = Enum.TextXAlignment.Center })
 
 local fileList
 local selFile = CFG.selected
@@ -1263,6 +1509,35 @@ btnK(btnRow, "delete", { Size = UDim2.new(0.33, -4, 1, 0), BackgroundColor3 = C.
 	selFile = nil
 	refreshFiles()
 end)
+
+local shareRow = hbar(mScroll, { Size = UDim2.new(1, -6, 0, 32), LayoutOrder = mo() })
+btnK(shareRow, "share", { Size = UDim2.new(0.5, -3, 1, 0), BackgroundColor3 = C.acc, TextColor3 = C.bg }, function()
+	if not selFile then status("pick_file") return end
+	local code = makeShareCode(selFile)
+	if not code then status("share_fail") return end
+	if setClip(code) then status("share_ok", selFile) else status("no_clip") end
+end)
+local importBox
+btnK(shareRow, "import_btn", { Size = UDim2.new(0.5, -3, 1, 0), BackgroundColor3 = C.acc2, TextColor3 = C.bg }, function()
+	if running or recording then status("stop_first") return end
+	local code = importBox.Text
+	if code:gsub("%s", "") == "" then code = getClip() or "" end
+	local name, n = importCode(code)
+	if not name then
+		if n == "empty" then status("import_empty")
+		elseif n == "nowrite" then status("no_writefile")
+		else status("import_bad") end
+		return
+	end
+	importBox.Text = ""
+	selFile = name
+	nameBox.Text = name
+	loadMacro(name)
+	refreshFiles()
+	status("import_ok", name, n)
+end)
+importBox = box(mScroll, "", { Size = UDim2.new(1, -6, 0, 30), LayoutOrder = mo(), TextXAlignment = Enum.TextXAlignment.Left, ClearTextOnFocus = false, TextTruncate = Enum.TextTruncate.AtEnd })
+bind(importBox, "PlaceholderText", "import_ph")
 
 txtK(mScroll, "saved_macros", { Size = UDim2.new(1, -6, 0, 18), TextColor3 = C.sub, TextSize = 12, LayoutOrder = mo() })
 fileList = new("ScrollingFrame", {
@@ -1360,6 +1635,7 @@ local function rebuildStages(animate)
 			if n then
 				p.price = n
 				p.locked = true -- แก้เองแล้วล็อคอัตโนมัติ ไม่ให้ระบบเรียนรู้ทับ
+				autoSave()
 			end
 			rebuildStages(false)
 		end)
@@ -1367,6 +1643,7 @@ local function rebuildStages(animate)
 		local lk = btn(row, locked and T("lock_on") or T("lock_off"), { Size = UDim2.fromOffset(80, 26), Position = UDim2.fromOffset(382, 5), BackgroundColor3 = locked and C.acc or C.off, TextColor3 = locked and C.bg or C.text })
 		lk.MouseButton1Click:Connect(function()
 			p.locked = not p.locked
+			autoSave()
 			rebuildStages(false)
 		end)
 	end
@@ -1446,15 +1723,16 @@ local function refreshSteps()
 		txt(row, (s.type ~= "sell" and pr > 0) and ("$ " .. fmt(pr)) or "-", { Size = UDim2.fromOffset(80, 30), Position = UDim2.fromOffset(292, 0), TextSize = 12, TextColor3 = C.sub, TextXAlignment = Enum.TextXAlignment.Center })
 		btn(row, "^", { Size = UDim2.fromOffset(26, 22), Position = UDim2.fromOffset(376, 4) }, function()
 			if running or recording then status("stop_first") return end
-			if i > 1 then steps[i], steps[i - 1] = steps[i - 1], steps[i] UI.refresh() end
+			if i > 1 then steps[i], steps[i - 1] = steps[i - 1], steps[i] autoSave() UI.refresh() end
 		end, true)
 		btn(row, "v", { Size = UDim2.fromOffset(26, 22), Position = UDim2.fromOffset(404, 4) }, function()
 			if running or recording then status("stop_first") return end
-			if i < #steps then steps[i], steps[i + 1] = steps[i + 1], steps[i] UI.refresh() end
+			if i < #steps then steps[i], steps[i + 1] = steps[i + 1], steps[i] autoSave() UI.refresh() end
 		end, true)
 		btn(row, "x", { Size = UDim2.fromOffset(26, 22), Position = UDim2.fromOffset(432, 4), BackgroundColor3 = C.bad }, function()
 			if running or recording then status("stop_first") return end
 			table.remove(steps, i)
+			autoSave()
 			UI.refresh()
 		end, true)
 		local doB = btn(row, "", { Size = UDim2.fromOffset(44, 22), Position = UDim2.fromOffset(462, 4), BackgroundColor3 = C.acc2, TextColor3 = C.bg }, function()
@@ -1767,7 +2045,7 @@ end))
 local last = {}
 local function due(k, iv)
 	local n = os.clock()
-	iv = math.max(0.2, tonumber(iv) or 1)
+	iv = math.max(0.03, tonumber(iv) or 1)
 	if not last[k] or n - last[k] >= iv then
 		last[k] = n
 		return true
@@ -1780,7 +2058,7 @@ task.spawn(function()
 		if flags.speed and due("speed", CFG.speedInterval) then invokeFunc("ChangeSpeed", CFG.speed) end
 		if flags.skip and due("skip", CFG.skipInterval) then fireEvent("WaveSkip") end
 		if flags.again and due("again", CFG.againInterval) then fireEvent("PlayAgain") end
-		task.wait(0.2)
+		task.wait()
 	end
 end)
 
