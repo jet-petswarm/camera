@@ -2387,10 +2387,41 @@ corner(JH.profile, 14)
 local pst = stroke(JH.profile, C.acc, 1.2, 0.55)
 paint(function() pst.Color = C.acc end)
 
+-- ออร่าดำ-แดง (2D เคลื่อนไหว อยู่หลังโมเดล)
+local aura = new("Frame", { Size = UDim2.new(1, -14, 0, 104), Position = UDim2.fromOffset(7, 7), BackgroundColor3 = Color3.new(1, 1, 1), BorderSizePixel = 0, ClipsDescendants = true }, JH.profile)
+corner(aura, 10)
+new("UIGradient", { Rotation = 90, Color = ColorSequence.new(Color3.fromRGB(3, 2, 4), Color3.fromRGB(70, 0, 12)) }, aura)
+local auraLayers, auraFlames, auraEmbers = {}, {}, {}
+for i = 0, 5 do
+	local k = i / 5
+	local f = new("Frame", {
+		AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.58), Size = UDim2.fromOffset(0, 0), BorderSizePixel = 0,
+		BackgroundColor3 = Color3.fromRGB(math.floor(110 + 145 * k), math.floor(30 * k), math.floor(14 + 26 * k)), BackgroundTransparency = 0.9 - 0.25 * k,
+	}, aura)
+	corner(f, 999)
+	auraLayers[i + 1] = f
+end
+for i = 1, 9 do
+	local black = (i % 2 == 0)
+	local f = new("Frame", { AnchorPoint = Vector2.new(0.5, 1), Position = UDim2.new((i - 0.5) / 9, 0, 1.1, 0), Size = UDim2.fromOffset(16, 60), BackgroundColor3 = Color3.new(1, 1, 1), BorderSizePixel = 0 }, aura)
+	corner(f, 999)
+	new("UIGradient", {
+		Rotation = 90,
+		Color = black and ColorSequence.new(Color3.fromRGB(0, 0, 0), Color3.fromRGB(120, 0, 12)) or ColorSequence.new(Color3.fromRGB(20, 0, 0), Color3.fromRGB(255, 30, 40)),
+		Transparency = NumberSequence.new({ NumberSequenceKeypoint.new(0, 1), NumberSequenceKeypoint.new(0.5, 0.5), NumberSequenceKeypoint.new(1, 0.1) }),
+	}, f)
+	auraFlames[i] = { f = f, ph = math.random() * 6.28, sp = 1.8 + math.random() * 1.8, base = 0.5 + math.random() * 0.4, w = 12 + math.random() * 12 }
+end
+for i = 1, 16 do
+	local f = new("Frame", { Size = UDim2.fromOffset(3, 3), BorderSizePixel = 0, BackgroundColor3 = (i % 3 == 0) and Color3.fromRGB(255, 130, 60) or Color3.fromRGB(255, 30, 40) }, aura)
+	corner(f, 999)
+	auraEmbers[i] = { f = f, x = math.random(), ph = math.random(), sp = 0.15 + math.random() * 0.2, sw = 0.03 + math.random() * 0.04 }
+end
+
 JH.avatarImg = new("ImageLabel", { Size = UDim2.new(1, -14, 0, 104), Position = UDim2.fromOffset(7, 7), BackgroundColor3 = C.panel, BorderSizePixel = 0, ScaleType = Enum.ScaleType.Crop }, JH.profile)
 corner(JH.avatarImg, 10)
 JH.vp = new("ViewportFrame", {
-	Size = UDim2.new(1, -14, 0, 104), Position = UDim2.fromOffset(7, 7), BackgroundColor3 = C.panel, BorderSizePixel = 0,
+	Size = UDim2.new(1, -14, 0, 104), Position = UDim2.fromOffset(7, 7), BackgroundTransparency = 1, BackgroundColor3 = C.panel, BorderSizePixel = 0,
 	Ambient = Color3.fromRGB(175, 180, 200), LightColor = Color3.new(1, 1, 1), LightDirection = Vector3.new(-0.6, -0.8, 0.5), Visible = false,
 }, JH.profile)
 corner(JH.vp, 10)
@@ -2423,7 +2454,163 @@ local function armPose(clone, side, p)
 	return true
 end
 
+-- ===== ตกแต่งโมเดลโปรไฟล์: เสื้อ JETHUB / ดาบซามูไร / สายฟ้าแดงที่ตา =====
+-- ปรับตำแหน่งได้ตรงนี้ (ถ้าดาบ/ตัวหนังสือ/ตาไม่ตรง)
+local EYE   = { x = 0.19, y = 0.05 }                                       -- ตา: สัดส่วนของขนาดหัว
+local SWORD = { off = Vector3.new(-0.8, -0.5, -0.45), rx = -15, rz = -55 } -- ดาบ: ตำแหน่งที่เอว + มุมเอียง
+local SHIRT = { textY = -0.42, px = 0.075 }                                -- ตัวหนังสือ JETHUB บนอก
+local RED, DEEP, BLK, GOLD = Color3.fromRGB(255, 35, 45), Color3.fromRGB(150, 0, 20), Color3.fromRGB(14, 14, 18), Color3.fromRGB(205, 165, 60)
+local PIXFONT = {
+	J = { "001", "001", "001", "101", "010" }, E = { "111", "100", "110", "100", "111" }, T = { "111", "010", "010", "010", "010" },
+	H = { "101", "101", "111", "101", "101" }, U = { "101", "101", "101", "101", "111" }, B = { "110", "101", "110", "101", "110" },
+}
+local decoState
+
+local function mkPart(parent, size, cf, color, mat, tr)
+	local p = Instance.new("Part")
+	p.Anchored, p.CanCollide, p.CanTouch, p.CanQuery, p.CastShadow = true, false, false, false, false
+	p.TopSurface, p.BottomSurface = Enum.SurfaceType.Smooth, Enum.SurfaceType.Smooth
+	p.Size, p.CFrame, p.Color = size, cf, color
+	p.Material = mat or Enum.Material.SmoothPlastic
+	p.Transparency = tr or 0
+	p.Parent = parent
+	return p
+end
+
+local function dressUp(clone)
+	for _, d in ipairs(clone:GetChildren()) do
+		if d:IsA("Shirt") or d:IsA("ShirtGraphic") then d:Destroy() end
+	end
+	local function dark(n)
+		local p = clone:FindFirstChild(n)
+		if p and p:IsA("BasePart") then
+			p.Color, p.Material = BLK, Enum.Material.SmoothPlastic
+			pcall(function() p.TextureID = "" end)
+			for _, c in ipairs(p:GetChildren()) do if c:IsA("SurfaceAppearance") then c:Destroy() end end
+		end
+		return p
+	end
+	local ut, lt = dark("UpperTorso"), dark("LowerTorso")
+	for _, n in ipairs({ "LeftUpperArm", "LeftLowerArm", "RightUpperArm", "RightLowerArm" }) do dark(n) end
+	if not (ut and lt) then return end
+	local s = math.max(ut.Size.X / 2, 0.3)
+
+	-- เข็มขัด + หัวเข็มขัด
+	mkPart(clone, Vector3.new(lt.Size.X + 0.08, 0.22 * s, lt.Size.Z + 0.08), lt.CFrame * CFrame.new(0, lt.Size.Y / 2 - 0.02, 0), DEEP)
+	mkPart(clone, Vector3.new(0.2 * s, 0.2 * s, 0.05), lt.CFrame * CFrame.new(0, lt.Size.Y / 2 - 0.02, -lt.Size.Z / 2 - 0.05), RED, Enum.Material.Neon)
+	-- ขลิบแดงปลายแขนเสื้อ
+	for _, n in ipairs({ "LeftLowerArm", "RightLowerArm" }) do
+		local a = clone:FindFirstChild(n)
+		if a then mkPart(clone, Vector3.new(a.Size.X + 0.05, 0.1 * s, a.Size.Z + 0.05), a.CFrame * CFrame.new(0, -a.Size.Y / 2 + 0.12 * s, 0), RED, Enum.Material.Neon) end
+	end
+	-- ตัวหนังสือ JETHUB (พิกเซลเรืองแสง) ที่หน้าอก/ท้อง
+	local text, px = "JETHUB", SHIRT.px * s
+	local total = #text * 3 + (#text - 1)
+	local x0 = -total * px / 2 + px / 2
+	local col = 0
+	for ci = 1, #text do
+		local g = PIXFONT[text:sub(ci, ci)]
+		for r = 1, 5 do
+			for c = 1, 3 do
+				if g[r]:sub(c, c) == "1" then
+					local x = -(x0 + (col + c - 1) * px) -- กล้องมองจากด้านหน้า: +X ของตัวละครอยู่ซ้ายจอ
+					local y = SHIRT.textY * s + (3 - r) * px
+					mkPart(clone, Vector3.new(px * 0.95, px * 0.95, 0.04), ut.CFrame * CFrame.new(x, y, -ut.Size.Z / 2 - 0.02), RED, Enum.Material.Neon)
+				end
+			end
+		end
+		col += 4
+	end
+
+	-- ดาบคาตานะข้างเอว (ซ้ายของตัวละคร)
+	local base = lt.CFrame * CFrame.new(SWORD.off * s) * CFrame.Angles(math.rad(SWORD.rx), 0, math.rad(SWORD.rz))
+	local function sp(size, y, color, mat, z, tr)
+		return mkPart(clone, size * s, base * CFrame.new(0, y * s, (z or 0) * s), color, mat, tr)
+	end
+	local saya = sp(Vector3.new(0.15, 2.1, 0.26), -0.55, BLK)
+	saya.Reflectance = 0.15
+	sp(Vector3.new(0.04, 2.0, 0.04), -0.55, RED, Enum.Material.Neon, -0.14) -- เส้นแดงเรืองแสงตามฝัก
+	sp(Vector3.new(0.17, 0.12, 0.28), -1.6, DEEP)                           -- ปลายฝัก
+	sp(Vector3.new(0.19, 0.1, 0.3), 0.52, GOLD, Enum.Material.Metal)      -- ปากฝัก
+	local tsuba = mkPart(clone, Vector3.new(0.05, 0.46, 0.46) * s, base * CFrame.new(0, 0.6 * s, 0) * CFrame.Angles(0, 0, math.pi / 2), GOLD, Enum.Material.Metal)
+	tsuba.Shape = Enum.PartType.Cylinder
+	sp(Vector3.new(0.13, 0.75, 0.2), 0.99, Color3.fromRGB(25, 25, 30))     -- ด้าม
+	for i = 0, 4 do sp(Vector3.new(0.15, 0.07, 0.22), 0.7 + i * 0.14, DEEP) end -- ผ้าพันด้าม
+	sp(Vector3.new(0.15, 0.08, 0.22), 1.4, GOLD, Enum.Material.Metal)      -- หัวด้าม
+end
+
+local function buildFx(clone)
+	local head = clone:FindFirstChild("Head")
+	if not head then return nil end
+	local fx = Instance.new("Folder")
+	fx.Name = "fx"
+	fx.Parent = JH.vp
+	local d = { clone = clone, head = head, fx = fx, eyes = {}, acc = 0 }
+	local hs = head.Size.Y
+	for _, sign in ipairs({ -1, 1 }) do
+		local e = { sign = sign, segs = {} }
+		e.orb = mkPart(fx, Vector3.one * 0.12 * hs, CFrame.new(), RED, Enum.Material.Neon)
+		e.orb.Shape = Enum.PartType.Ball
+		e.halo = mkPart(fx, Vector3.one * 0.3 * hs, CFrame.new(), RED, Enum.Material.Neon, 0.6)
+		e.halo.Shape = Enum.PartType.Ball
+		for i = 1, 6 do
+			e.segs[i] = {
+				core = mkPart(fx, Vector3.new(0.03, 0.03, 0.1), CFrame.new(), Color3.fromRGB(255, 120, 120), Enum.Material.Neon),
+				glow = mkPart(fx, Vector3.new(0.1, 0.1, 0.1), CFrame.new(), RED, Enum.Material.Neon, 0.65),
+			}
+		end
+		d.eyes[#d.eyes + 1] = e
+	end
+	return d
+end
+
+local function updateFx(d, t, dt)
+	local head = d.head
+	if not head.Parent then return end
+	local hs, hz = head.Size.Y, head.Size.Z
+	d.acc += dt
+	local refresh = d.acc >= 0.06 -- สายฟ้าสุ่มใหม่ ~16 ครั้ง/วินาที
+	if refresh then d.acc = 0 end
+	local hcf = head.CFrame
+	for _, e in ipairs(d.eyes) do
+		local o = Vector3.new(e.sign * EYE.x * head.Size.X, EYE.y * hs, -hz / 2 - 0.02)
+		local ow = hcf:PointToWorldSpace(o)
+		e.orb.CFrame = CFrame.new(ow)
+		e.halo.CFrame = CFrame.new(ow)
+		e.halo.Size = Vector3.one * 0.3 * hs * (1 + 0.25 * math.sin(t * 9 + e.sign))
+		if refresh then
+			local dir = Vector3.new(e.sign * (0.7 + math.random() * 0.5), 0.3 + math.random() * 0.7, -0.1).Unit
+			local len = (1 + math.random() * 0.9) * hs
+			local n = #e.segs
+			local pt = o
+			e.pts = { pt }
+			for i = 1, n do
+				local j = Vector3.new(math.random() - 0.5, math.random() - 0.5, (math.random() - 0.5) * 0.3) * 0.5 * hs
+				pt = pt + dir * (len / n) + j
+				e.pts[i + 1] = pt
+			end
+			e.vis = math.random() > 0.18 -- กะพริบ
+		end
+		if e.pts then
+			local n = #e.segs
+			for i, sg in ipairs(e.segs) do
+				local a, b = hcf:PointToWorldSpace(e.pts[i]), hcf:PointToWorldSpace(e.pts[i + 1])
+				local dist = (b - a).Magnitude
+				if dist > 1e-3 then
+					local cf = CFrame.lookAt(a, b) * CFrame.new(0, 0, -dist / 2)
+					local th = 0.035 * hs * (1 - 0.5 * (i - 1) / n)
+					sg.core.Size, sg.core.CFrame = Vector3.new(th, th, dist), cf
+					sg.glow.Size, sg.glow.CFrame = Vector3.new(th * 3.2, th * 3.2, dist), cf
+				end
+				sg.core.Transparency = e.vis and 0 or 1
+				sg.glow.Transparency = e.vis and 0.65 or 1
+			end
+		end
+	end
+end
+
 local function buildProfileModel()
+	if decoState then decoState.fx:Destroy() decoState = nil end
 	if vpModel then vpModel:Destroy() vpModel = nil end
 	local char = LP.Character or LP.CharacterAdded:Wait()
 	local hum = char:WaitForChild("Humanoid", 10)
@@ -2448,10 +2635,12 @@ local function buildProfileModel()
 	local okR = armPose(clone, "Right", POSE.Right)
 	local okL = armPose(clone, "Left", POSE.Left)
 	if not (okR and okL) then return end
+	pcall(dressUp, clone)
 	clone.Parent = JH.vp
 	local cam = new("Camera", { FieldOfView = 30, CFrame = CFrame.lookAt(Vector3.new(0, 1.3, -7.6), Vector3.new(0, 1.05, 0)) }, JH.vp)
 	JH.vp.CurrentCamera = cam
 	vpModel = clone
+	decoState = buildFx(clone)
 	JH.vp.Visible = true
 	JH.avatarImg.Visible = false
 end
@@ -2462,6 +2651,32 @@ table.insert(conns, LP.CharacterAdded:Connect(function()
 	JH.avatarImg.Visible = true
 	task.wait(2)
 	pcall(buildProfileModel)
+end))
+
+-- แอนิเมชันโปรไฟล์: ออร่า + โมเดลโยกเบาๆ + สายฟ้าที่ตา
+table.insert(conns, RunService.RenderStepped:Connect(function(dt)
+	if not aura.Parent then return end
+	local t = os.clock()
+	local H, W = math.max(aura.AbsoluteSize.Y, 1), math.max(aura.AbsoluteSize.X, 1)
+	for i, f in ipairs(auraLayers) do
+		local dia = H * (1.35 - (i - 1) * 0.17) * (1 + 0.06 * math.sin(t * 2.2 + i * 0.7))
+		f.Size = UDim2.fromOffset(dia * 0.8, dia)
+	end
+	for _, a in ipairs(auraFlames) do
+		local h = H * a.base * (0.75 + 0.25 * math.sin(t * a.sp + a.ph) + 0.1 * math.sin(t * a.sp * 2.3 + a.ph))
+		a.f.Size = UDim2.fromOffset(a.w, h)
+		a.f.Rotation = 7 * math.sin(t * 1.7 + a.ph)
+	end
+	for _, m in ipairs(auraEmbers) do
+		local k = (t * m.sp + m.ph) % 1
+		m.f.Position = UDim2.fromOffset((m.x + m.sw * math.sin(t * 3 + m.ph * 6)) * W, (1.05 - k * 1.1) * H)
+		m.f.BackgroundTransparency = k * k
+	end
+	local d = decoState
+	if d and d.clone.Parent then
+		d.clone:PivotTo(CFrame.new(0, math.sin(t * 1.6) * 0.035, 0) * CFrame.Angles(0, math.sin(t * 0.8) * 0.3, 0))
+		updateFx(d, t, dt)
+	end
 end))
 
 --------------------------------------------------------------------------
