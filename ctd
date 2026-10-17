@@ -1,5 +1,9 @@
 --[[
-	JET HUB _ CAMERA  v2  -  Cameraman Tower Defense
+	JET HUB _ CAMERA  v5  -  Cameraman Tower Defense
+
+	v5: + Auto Delete Enemies (Workspace.Game.Enemies)
+	    + Auto Reconnect (Map ID 132929771812494 หรือลิงก์เซิร์ฟ, จำค่าอัตโนมัติ)
+	    + Autoplay (วาร์ปไป Toilet City 747.2, 308.4, 588.3 เมื่ออยู่แมพนี้)
 
 	v3: ราคา/ล็อคราคาเซฟลงไฟล์มาโครอัตโนมัติ, Skip Wave รัวได้ตามเวลาที่ตั้ง (ต่ำสุด 0.03 วิ)
 	v2:
@@ -46,7 +50,11 @@ local CFG = {
 	againInterval = 5,
 	lang = ((LP.LocaleId or ""):sub(1, 2) == "th") and "th" or "en",
 	tab = 1,
-	flags = { vote = false, speed = false, skip = false, again = false, play = false, loop = false },
+	rejoinMode = "id", -- "id" = เข้า Map ID / "link" = เข้าลิงก์เซิร์ฟ
+	serverLink = "",
+	reloadSrc = "",
+	playMap = "toilet",
+	flags = { vote = false, speed = false, skip = false, again = false, play = false, loop = false, delEnemies = false, reconnect = false, autoplay = false },
 }
 
 local function loadCfg()
@@ -182,6 +190,19 @@ local LANG = {
 		step_deleted = "Deleted step #%d and saved to macro: %s",
 		step_moved = "Moved step and saved to macro: %s",
 		cleared_saved = "Cleared all steps and saved to macro: %s",
+		g_enemy = "Enemies", del_enemies = "Auto Delete Enemies", del_enemies_d = "Deletes everything in Workspace.Game.Enemies",
+		g_reconnect = "Auto Reconnect", auto_reconnect = "Auto Reconnect", auto_reconnect_d = "Rejoins on disconnect / kick / any error",
+		rc_mode_id = "Map ID", rc_mode_link = "Server link",
+		rc_link_ph = "Paste server link here, then press Enter",
+		rc_reload_ph = "Re-run script after rejoin (URL or file name, optional)",
+		rc_link_saved = "Server link saved: will rejoin via link", rc_link_cleared = "Link cleared: will rejoin via Map ID",
+		rc_reload_saved = "Reload source saved",
+		rc_note = "Tip: put this script in your executor's autoexec folder so it restarts after rejoin (or fill the box above, not both).",
+		rc_start = "Disconnected (%s). Rejoining...",
+		g_autoplay = "Autoplay", autoplay = "Autoplay", autoplay_d = "Warps to the selected map's start spot",
+		map_toilet = "Toilet City",
+		ap_warp = "Autoplay: at %s, waiting for the game to start", ap_wrong_place = "Autoplay only works inside map 132929771812494",
+		ap_note = "Use a private server, turn Autoplay on, and it starts once you are in map 132929771812494.",
 	},
 	th = {
 		ready = "พร้อมใช้งาน",
@@ -289,6 +310,19 @@ local LANG = {
 		step_deleted = "ลบสเต็ป #%d และบันทึกลงมาโครแล้ว: %s",
 		step_moved = "ย้ายสเต็ปและบันทึกลงมาโครแล้ว: %s",
 		cleared_saved = "ล้างสเต็ปทั้งหมดและบันทึกลงมาโครแล้ว: %s",
+		g_enemy = "ศัตรู", del_enemies = "ลบมอนอัตโนมัติ", del_enemies_d = "ลบทุกตัวใน Workspace.Game.Enemies",
+		g_reconnect = "รีคอนเนคอัตโนมัติ", auto_reconnect = "Auto Reconnect", auto_reconnect_d = "รีจอยเมื่อหลุด / โดนเตะ / error ทุกชนิด",
+		rc_mode_id = "ไอดีแมพ", rc_mode_link = "ลิงก์เซิร์ฟ",
+		rc_link_ph = "วางลิงก์เซิร์ฟตรงนี้ แล้วกด Enter",
+		rc_reload_ph = "รันสคริปต์ซ้ำหลังรีจอย (ลิงก์ URL หรือชื่อไฟล์ ไม่ใส่ก็ได้)",
+		rc_link_saved = "บันทึกลิงก์เซิร์ฟแล้ว: ตอนหลุดจะเข้าลิงก์แทน", rc_link_cleared = "ล้างลิงก์แล้ว: ตอนหลุดจะเข้าไอดีแมพ",
+		rc_reload_saved = "บันทึกที่มาสคริปต์แล้ว",
+		rc_note = "แนะนำ: วางสคริปต์นี้ในโฟลเดอร์ autoexec ของ executor เพื่อให้รันเองหลังรีจอย (หรือใส่ช่องด้านบน อย่าใช้ทั้งคู่)",
+		rc_start = "หลุดจากเกม (%s) กำลังรีจอย...",
+		g_autoplay = "ออโต้เพลย์", autoplay = "Autoplay", autoplay_d = "วาร์ปไปจุดเริ่มของแมพที่เลือก",
+		map_toilet = "Toilet City",
+		ap_warp = "Autoplay: ไปจุด %s แล้ว รอเกมวาร์ปให้เอง", ap_wrong_place = "Autoplay ใช้ได้เฉพาะในแมพ 132929771812494",
+		ap_note = "ให้ใช้กับเซิร์ฟส่วนตัว เปิด Autoplay แล้วเกมจะเริ่มเมื่อคุณอยู่ในแมพ 132929771812494",
 	},
 }
 
@@ -1516,9 +1550,9 @@ txtK(foot, "hint_keys", { Size = UDim2.fromOffset(230, FOOT), Position = UDim2.n
 -- Toast แจ้งเตือน -------------------------------------------------------
 do
 local TOAST = {}
-for _, k in ipairs({ "no_remote", "step_fail", "no_hook", "import_bad", "share_fail", "no_clip", "no_writefile", "rec_rejected" }) do TOAST[k] = "bad" end
+for _, k in ipairs({ "no_remote", "step_fail", "no_hook", "import_bad", "share_fail", "no_clip", "no_writefile", "rec_rejected", "rc_start", "ap_wrong_place" }) do TOAST[k] = "bad" end
 for _, k in ipairs({ "stop_first", "close_rec", "pick_file", "need_unit", "import_empty", "stopped" }) do TOAST[k] = "warn" end
-for _, k in ipairs({ "voted", "speed_set", "deleted", "import_ok", "share_ok", "step_ok", "step_deleted", "step_moved", "cleared_saved", "rec_started", "rec_stopped", "unit_selected" }) do TOAST[k] = "ok" end
+for _, k in ipairs({ "voted", "speed_set", "deleted", "import_ok", "share_ok", "step_ok", "step_deleted", "step_moved", "cleared_saved", "rec_started", "rec_stopped", "unit_selected", "rc_link_saved", "rc_link_cleared", "rc_reload_saved", "ap_warp" }) do TOAST[k] = "ok" end
 
 JH.toasts = new("Frame", { Size = UDim2.fromOffset(310, 250), AnchorPoint = Vector2.new(1, 1), Position = UDim2.new(1, -14, 1, -(FOOT + 10)), BackgroundTransparency = 1, ZIndex = 50 }, body)
 new("UIListLayout", { Padding = UDim.new(0, 6), VerticalAlignment = Enum.VerticalAlignment.Bottom, HorizontalAlignment = Enum.HorizontalAlignment.Right, SortOrder = Enum.SortOrder.LayoutOrder }, JH.toasts)
@@ -1601,6 +1635,153 @@ local function newPage(key, icon)
 end
 
 --------------------------------------------------------------------------
+-- Auto: Delete Enemies / Auto Reconnect / Autoplay
+--------------------------------------------------------------------------
+local MAP_PLACE_ID = 132929771812494
+-- เพิ่มแมพใหม่ได้ตรงนี้ (ต้องเพิ่ม key ชื่อแมพใน LANG ด้วย)
+local MAPS = {
+	{ id = "toilet", key = "map_toilet", pos = Vector3.new(747.2, 308.4, 588.3) },
+}
+local function mapById(id)
+	for _, m in ipairs(MAPS) do if m.id == id then return m end end
+	return MAPS[1]
+end
+local function trim(v) return (tostring(v or ""):gsub("^%s+", ""):gsub("%s+$", "")) end
+
+-- 1) ลบมอน: ดักตอนเกิด (ChildAdded) + กวาดซ้ำทุก 0.25 วิ
+do
+	local function enemiesFolder()
+		local g = workspace:FindFirstChild("Game")
+		return g and g:FindFirstChild("Enemies")
+	end
+	local function kill(e) pcall(game.Destroy, e) end
+	local hooked, conn
+	task.spawn(function()
+		while gui.Parent do
+			if flags.delEnemies then
+				local f = enemiesFolder()
+				if f and f ~= hooked then
+					if conn then conn:Disconnect() end
+					hooked = f
+					conn = f.ChildAdded:Connect(function(e) if flags.delEnemies then kill(e) end end)
+				end
+				if f then for _, e in ipairs(f:GetChildren()) do kill(e) end end
+			elseif conn then
+				conn:Disconnect() conn, hooked = nil, nil
+			end
+			task.wait(0.25)
+		end
+		if conn then conn:Disconnect() end
+	end)
+end
+
+-- 2) Auto Reconnect
+do
+	local TeleportService = game:GetService("TeleportService")
+	local GuiService = game:GetService("GuiService")
+	local rejoining = false
+
+	local function parseLink(link)
+		local pid = link:match("[?&]placeId=(%d+)") or link:match("/games/(%d+)")
+		local job = link:match("gameInstanceId=([%w%-]+)")
+		if not job and link:match("^%x%x%x%x%x%x%x%x%-%x%x%x%x%-%x%x%x%x%-%x%x%x%x%-%x%x%x%x%x%x%x%x%x%x%x%x$") then job = link end
+		return tonumber(pid), job
+	end
+	local function openLink(link)
+		local ok = pcall(function() GuiService:OpenBrowserWindow(link) end)
+		if not ok and openurl then pcall(openurl, link) end
+	end
+	local function doRejoin()
+		local link = trim(CFG.serverLink)
+		if CFG.rejoinMode == "link" and link ~= "" then
+			local pid, job = parseLink(link)
+			if job then
+				pcall(TeleportService.TeleportToPlaceInstance, TeleportService, pid or MAP_PLACE_ID, job, LP)
+			else
+				openLink(link) -- ลิงก์เซิร์ฟส่วนตัว / ลิงก์แชร์: ให้ Roblox เปิดเอง
+			end
+		else
+			pcall(TeleportService.Teleport, TeleportService, MAP_PLACE_ID, LP)
+		end
+	end
+	local function queueReload()
+		local q = queue_on_teleport or (syn and syn.queue_on_teleport) or (fluxus and fluxus.queue_on_teleport)
+		local src = trim(CFG.reloadSrc)
+		if not q or src == "" then return end
+		local code = src:match("^https?://") and string.format("loadstring(game:HttpGet(%q))()", src) or string.format("loadstring(readfile(%q))()", src)
+		pcall(q, code)
+	end
+	local function trigger(reason)
+		if not flags.reconnect or rejoining then return end
+		rejoining = true
+		status("rc_start", tostring(reason or "error"):sub(1, 60))
+		task.spawn(function()
+			task.wait(3)
+			local queued = false
+			while flags.reconnect and gui.Parent do
+				if not queued then queueReload() queued = true end
+				doRejoin()
+				task.wait(10) -- ถ้ายังไม่ได้ย้าย ลองใหม่เรื่อยๆ
+			end
+			rejoining = false
+		end)
+	end
+
+	pcall(function()
+		GuiService.ErrorMessageChanged:Connect(function()
+			local m = GuiService:GetErrorMessage()
+			if m and m ~= "" then trigger(m) end
+		end)
+	end)
+	task.spawn(function()
+		local ok, overlay = pcall(function()
+			return game:GetService("CoreGui"):WaitForChild("RobloxPromptGui", 30):WaitForChild("promptOverlay", 30)
+		end)
+		if ok and overlay then
+			overlay.ChildAdded:Connect(function(c)
+				if c.Name == "ErrorPrompt" then trigger("ErrorPrompt") end
+			end)
+		end
+	end)
+end
+
+-- 3) Autoplay: อยู่แมพ MAP_PLACE_ID แล้ววาร์ปไปจุดเริ่มของแมพที่เลือก
+do
+	local busy = false
+	function JH.autoplayNow(silent)
+		if not flags.autoplay or busy then return end
+		if game.PlaceId ~= MAP_PLACE_ID then
+			if not silent then status("ap_wrong_place") end
+			return
+		end
+		local m = mapById(CFG.playMap)
+		busy = true
+		task.spawn(function()
+			local char = LP.Character or LP.CharacterAdded:Wait()
+			local hrp = char:WaitForChild("HumanoidRootPart", 15)
+			if hrp then
+				task.wait(2)
+				-- ไปยืนที่จุดแล้วรอเกมวาร์ปให้เอง: ถ้าหลุดจากจุดนิดหน่อยจะดึงกลับ
+				-- แต่ถ้าถูกเกมวาร์ปไปไกล (>60 studs) ถือว่าเกมเริ่มแล้ว หยุดดึง
+				local first = true
+				while flags.autoplay and hrp.Parent and game.PlaceId == MAP_PLACE_ID do
+					local d = (hrp.Position - m.pos).Magnitude
+					if first or (d > 3 and d <= 60) then
+						hrp.CFrame = CFrame.new(m.pos)
+						if first then status("ap_warp", T(m.key)) first = false end
+					elseif d > 60 then
+						break
+					end
+					task.wait(0.5)
+				end
+			end
+			busy = false
+		end)
+	end
+	LP.CharacterAdded:Connect(function() task.wait(0.5) JH.autoplayNow(true) end)
+end
+
+--------------------------------------------------------------------------
 -- PAGE: Game
 --------------------------------------------------------------------------
 JH.pGame = newPage("tab_game", "🎮")
@@ -1641,6 +1822,56 @@ do
 	g, o = group(JH.gScroll, go(), "g_again", "🔁")
 	switch(g, "auto_again", flags.again, { Size = UDim2.new(1, 0, 0, 46), LayoutOrder = o() }, function(v) flags.again = v saveCfg() end, "auto_again_d", "♻")
 	numRow(g, o(), "again_every", "againInterval", 1, 0.1)
+
+	g, o = group(JH.gScroll, go(), "g_enemy", "🗑")
+	switch(g, "del_enemies", flags.delEnemies, { Size = UDim2.new(1, 0, 0, 46), LayoutOrder = o() }, function(v) flags.delEnemies = v saveCfg() end, "del_enemies_d", "🗑")
+
+	g, o = group(JH.gScroll, go(), "g_reconnect", "🔌")
+	switch(g, "auto_reconnect", flags.reconnect, { Size = UDim2.new(1, 0, 0, 46), LayoutOrder = o() }, function(v) flags.reconnect = v saveCfg() end, "auto_reconnect_d", "🔌")
+	local rcSeg
+	rcSeg = seg(g, { { id = "id", key = "rc_mode_id" }, { id = "link", key = "rc_mode_link" } }, { Size = UDim2.new(1, 0, 0, 34), LayoutOrder = o() }, function(m)
+		CFG.rejoinMode = m
+		saveCfg()
+		rcSeg.set(m)
+	end)
+	rcSeg.set(CFG.rejoinMode, false)
+	-- เซฟอัตโนมัติทั้งตอนกด Enter และตอนแตะที่อื่น/กดเสร็จบนมือถือ (FocusLost)
+	local linkBox = box(g, CFG.serverLink or "", { Size = UDim2.new(1, 0, 0, 34), LayoutOrder = o(), TextXAlignment = LEFT, ClearTextOnFocus = false, ClipsDescendants = true }, function(t)
+		t = trim(t)
+		CFG.serverLink = t
+		CFG.rejoinMode = (t ~= "") and "link" or "id"
+		rcSeg.set(CFG.rejoinMode)
+		saveCfg()
+		status(t ~= "" and "rc_link_saved" or "rc_link_cleared")
+	end)
+	pad(linkBox, 0, 10, 0, 10)
+	bind(linkBox, "PlaceholderText", "rc_link_ph")
+	local reloadBox = box(g, CFG.reloadSrc or "", { Size = UDim2.new(1, 0, 0, 34), LayoutOrder = o(), TextXAlignment = LEFT, ClearTextOnFocus = false, ClipsDescendants = true }, function(t)
+		CFG.reloadSrc = trim(t)
+		saveCfg()
+		status("rc_reload_saved")
+	end)
+	pad(reloadBox, 0, 10, 0, 10)
+	bind(reloadBox, "PlaceholderText", "rc_reload_ph")
+	txtK(g, "rc_note", { Size = UDim2.new(1, 0, 0, 42), LayoutOrder = o(), TextColor3 = C.dim, TextSize = 11, TextWrapped = true, TextYAlignment = Enum.TextYAlignment.Top, TextTruncate = Enum.TextTruncate.None })
+
+	g, o = group(JH.gScroll, go(), "g_autoplay", "🎯")
+	local mapItems = {}
+	for _, m in ipairs(MAPS) do mapItems[#mapItems + 1] = { id = m.id, key = m.key } end
+	CFG.playMap = mapById(CFG.playMap).id
+	local mapSeg
+	mapSeg = seg(g, mapItems, { Size = UDim2.new(1, 0, 0, 34), LayoutOrder = o() }, function(id)
+		CFG.playMap = id
+		saveCfg()
+		mapSeg.set(id)
+	end)
+	mapSeg.set(CFG.playMap, false)
+	switch(g, "autoplay", flags.autoplay, { Size = UDim2.new(1, 0, 0, 46), LayoutOrder = o() }, function(v)
+		flags.autoplay = v
+		saveCfg()
+		if v then JH.autoplayNow() end
+	end, "autoplay_d", "🎯")
+	txtK(g, "ap_note", { Size = UDim2.new(1, 0, 0, 42), LayoutOrder = o(), TextColor3 = C.dim, TextSize = 11, TextWrapped = true, TextYAlignment = Enum.TextYAlignment.Top, TextTruncate = Enum.TextTruncate.None })
 
 	txtK(JH.gScroll, "remember_note", { Size = UDim2.new(1, -4, 0, 20), TextColor3 = C.dim, TextSize = 11, LayoutOrder = go() })
 end
@@ -2430,6 +2661,7 @@ JH.refreshFiles()
 if CFG.selected then loadMacro(CFG.selected) end
 refreshAll()
 status(hookOK and "ready" or "ready_nohook")
+task.defer(function() JH.autoplayNow(true) end)
 
 -- เปิด Play อัตโนมัติถ้าครั้งที่แล้วเปิดค้างไว้
 if flags.play then
